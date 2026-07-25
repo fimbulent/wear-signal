@@ -2,6 +2,7 @@ package dev.sam.wearsignal.messages
 
 import dev.sam.wearsignal.AppDeps
 import dev.sam.wearsignal.BuildConfig
+import dev.sam.wearsignal.calls.CallEngine
 import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.crypto.SessionLock
 import org.signal.core.models.ServiceId
@@ -121,11 +122,22 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
     content.pniSignatureMessage?.let { handlePniSignature(sourceServiceId, it) }
 
     content.callMessage?.let { call ->
-      CallLog.handleCallMessage(
+      // Fresh offers (and anything belonging to a live session) go straight into the
+      // calling engine so the watch can actually ring; everything else is history.
+      val ageSec = ((serverDeliveredTimestamp - (envelope.serverTimestamp ?: serverDeliveredTimestamp)).coerceAtLeast(0)) / 1000
+      val handledLive = CallEngine.maybeHandleLive(
         senderAci = sourceServiceId.toString(),
-        sentAt = envelope.clientTimestamp ?: serverDeliveredTimestamp,
+        senderDeviceId = result.metadata.sourceDeviceId,
+        ageSec = ageSec,
         call = call
       )
+      if (!handledLive) {
+        CallLog.handleCallMessage(
+          senderAci = sourceServiceId.toString(),
+          sentAt = envelope.clientTimestamp ?: serverDeliveredTimestamp,
+          call = call
+        )
+      }
       return null
     }
 

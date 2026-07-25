@@ -112,6 +112,21 @@ object CallLog {
     )
   }
 
+  /** Outcome of a call the watch itself rang or placed. Never notifies (the user was there). */
+  fun recordLiveCall(callId: Long, peer: String, isVideo: Boolean, outgoing: Boolean, outcome: String, startedAt: Long) {
+    upsert(
+      callId = callId,
+      peer = peer,
+      isGroup = false,
+      isVideo = isVideo,
+      outgoing = outgoing,
+      outcome = outcome,
+      startedAt = startedAt,
+      notified = true,
+      authoritative = true
+    )
+  }
+
   /** Latest group-call era seen for a group; Phase 2's "call may be ongoing" signal. */
   fun recordGroupCallUpdate(groupId: String, eraId: String, at: Long) {
     AppDeps.database.writableDatabase.execSQL(

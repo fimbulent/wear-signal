@@ -182,7 +182,16 @@ fun WearSignalNavHost() {
         onPoll = { pollNow() },
         onReply = { send(conversation.peer, conversation.isGroup, conversation.title) },
         onReact = ::react,
-        onReactCustom = pickEmoji
+        onReactCustom = pickEmoji,
+        // Calls need the peer's ACI; number-discovered contacts keyed by PNI can't be called yet.
+        onCall = if (conversation.isGroup || conversation.peer.startsWith("PNI:")) null else {
+          {
+            context.startActivity(
+              android.content.Intent(context, CallActivity::class.java)
+                .putExtra(CallActivity.EXTRA_OUTGOING_PEER, conversation.peer)
+            )
+          }
+        }
       )
     }
     composable("compose") {

@@ -76,7 +76,8 @@ fun ThreadScreen(
   onPoll: () -> Unit,
   onReply: () -> Unit,
   onReact: (MessageRow, String) -> Unit,
-  onReactCustom: (MessageRow) -> Unit
+  onReactCustom: (MessageRow) -> Unit,
+  onCall: (() -> Unit)? = null
 ) {
   // items: title + messages + reply chip; messages load asynchronously,
   // so scroll to the latest when they arrive rather than at creation
@@ -153,6 +154,16 @@ fun ThreadScreen(
             colors = ChipDefaults.primaryChipColors(),
             modifier = Modifier.weight(1f)
           )
+          if (onCall != null) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Button(
+              onClick = onCall,
+              colors = ButtonDefaults.secondaryButtonColors(),
+              modifier = Modifier.size(ButtonDefaults.SmallButtonSize)
+            ) {
+              Text("☎")
+            }
+          }
           Spacer(modifier = Modifier.width(4.dp))
           Button(
             onClick = onPoll,

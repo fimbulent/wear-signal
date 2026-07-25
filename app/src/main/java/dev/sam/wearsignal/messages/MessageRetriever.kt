@@ -50,7 +50,10 @@ class MessageRetriever(private val processor: EnvelopeProcessor) {
       }
       Log.i(TAG, "Drained queue: ${collected.size} new message(s) over $attempts batch(es)")
     } finally {
-      webSocket.disconnect()
+      // A drained fresh offer may have just started a call session that owns the socket now.
+      if (!dev.sam.wearsignal.calls.CallEngine.isSessionActive) {
+        webSocket.disconnect()
+      }
     }
 
     AppDeps.account.lastPollAt = System.currentTimeMillis()

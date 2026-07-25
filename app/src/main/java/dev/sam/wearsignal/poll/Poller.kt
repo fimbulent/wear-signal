@@ -1,6 +1,7 @@
 package dev.sam.wearsignal.poll
 
 import dev.sam.wearsignal.AppDeps
+import dev.sam.wearsignal.calls.CallEngine
 import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.messages.GroupStateResolver
 import dev.sam.wearsignal.messages.ProfileNameResolver
@@ -25,6 +26,10 @@ object Poller {
     if (!AppDeps.account.isLinked) {
       Log.w(TAG, "Not linked; skipping poll")
       return Result.Failure("Not linked")
+    }
+    if (CallEngine.isSessionActive) {
+      // The call session's signaling loop is draining the queue already.
+      return Result.Success(0)
     }
 
     val newMessages = try {

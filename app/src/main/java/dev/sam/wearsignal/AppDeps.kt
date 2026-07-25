@@ -33,7 +33,8 @@ object AppDeps {
   val aciProtocolStore: WatchProtocolStore by lazy { WatchProtocolStore(database, account, "aci") }
   val pniProtocolStore: WatchProtocolStore by lazy { WatchProtocolStore(database, account, "pni") }
   val messages: MessagesRepository by lazy { MessagesRepository(database) }
-  val retriever: MessageRetriever by lazy { MessageRetriever(EnvelopeProcessor(messages)) }
+  val envelopeProcessor: EnvelopeProcessor by lazy { EnvelopeProcessor(messages) }
+  val retriever: MessageRetriever by lazy { MessageRetriever(envelopeProcessor) }
   val notifier: NotificationPresenter by lazy { NotificationPresenter(appContext) }
   val avatars: AvatarStore by lazy { AvatarStore(appContext) }
   val attachments: AttachmentStore by lazy { AttachmentStore(appContext) }
