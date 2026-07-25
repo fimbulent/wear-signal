@@ -55,7 +55,10 @@ object Poller {
     if (pendingAcis.isNotEmpty() || pendingGroups.isNotEmpty()) {
       ProfileNameResolver.resolvePending(pendingAcis)
       GroupStateResolver.resolvePending(pendingGroups)
-      AppDeps.net.authWebSocket.disconnect()
+      // A fresh offer drained above may have started a call session that owns the socket.
+      if (!CallEngine.isSessionActive) {
+        AppDeps.net.authWebSocket.disconnect()
+      }
     }
 
     // Contacts without a Signal profile photo fall back to their synced address-book photo.

@@ -144,7 +144,10 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
       // Avatar fetches are tracked separately from name/state fetches so contacts and
       // groups that are already "fresh" still get their photo backfilled once.
       db.execSQL("ALTER TABLE contacts ADD COLUMN avatar_fetched_at INTEGER NOT NULL DEFAULT 0")
-      db.execSQL("ALTER TABLE groups ADD COLUMN avatar_fetched_at INTEGER NOT NULL DEFAULT 0")
+      if (oldVersion >= 3) {
+        // A groups table created by the v<3 step above already has this column.
+        db.execSQL("ALTER TABLE groups ADD COLUMN avatar_fetched_at INTEGER NOT NULL DEFAULT 0")
+      }
     }
     if (oldVersion < 5) {
       // Delivery/read receipt status for our own sent messages (matched by sent_at).
@@ -170,8 +173,11 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
     }
     if (oldVersion < 9) {
       createCallsTable(db)
-      db.execSQL("ALTER TABLE groups ADD COLUMN active_era TEXT")
-      db.execSQL("ALTER TABLE groups ADD COLUMN active_era_at INTEGER NOT NULL DEFAULT 0")
+      if (oldVersion >= 3) {
+        // A groups table created by the v<3 step above already has these columns.
+        db.execSQL("ALTER TABLE groups ADD COLUMN active_era TEXT")
+        db.execSQL("ALTER TABLE groups ADD COLUMN active_era_at INTEGER NOT NULL DEFAULT 0")
+      }
     }
   }
 

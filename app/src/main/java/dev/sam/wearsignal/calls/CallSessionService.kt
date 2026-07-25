@@ -55,6 +55,9 @@ class CallSessionService : Service() {
   private var ringtone: Ringtone? = null
   private var started = false
 
+  /** peer → display name, resolved once per session (notification rebuilds per state change). */
+  private var cachedName: Pair<String, String>? = null
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
@@ -78,20 +81,39 @@ class CallSessionService : Service() {
     }
     if (!started) {
       started = true
-      startForeground(
-        NOTIFICATION_ID,
-        buildNotification(CallEngine.state.value),
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-      )
+      try {
+        startForeground(
+          NOTIFICATION_ID,
+          buildNotification(CallEngine.state.value),
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        )
+      } catch (t: Throwable) {
+        // Mic-typed foreground starts are restricted from the background on newer
+        // Android; fall back to the call type alone (the mic engages after the user
+        // interacts anyway) rather than crashing mid-drain.
+        Log.w(TAG, "Mic-typed foreground start rejected; retrying as phoneCall only", t)
+        try {
+          startForeground(NOTIFICATION_ID, buildNotification(CallEngine.state.value), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+        } catch (t2: Throwable) {
+          Log.w(TAG, "Foreground start rejected outright", t2)
+          stopSelf()
+          return START_NOT_STICKY
+        }
+      }
       scope.launch {
+        // The service can start before RingRTC flips the state away from Idle, so only
+        // treat Idle as "session over" once a session was actually observed.
+        var sawSession = false
         CallEngine.state.collect { state ->
           when (state) {
-            is CallState.Idle -> stopSelf()
+            is CallState.Idle -> if (sawSession) stopSelf()
             is CallState.Incoming -> {
+              sawSession = true
               startRinging()
               getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(state))
             }
             else -> {
+              sawSession = true
               stopRinging()
               getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(state))
             }
@@ -116,7 +138,11 @@ class CallSessionService : Service() {
       is CallState.Ended -> state.peer
       else -> ""
     }
-    val name = if (peer.isNotEmpty()) Poller.resolveName(peer) else "Signal call"
+    val name = when {
+      peer.isEmpty() -> "Signal call"
+      cachedName?.first == peer -> cachedName!!.second
+      else -> Poller.resolveName(peer).also { cachedName = Pair(peer, it) }
+    }
     val person = Person.Builder().setName(name).build()
 
     val contentIntent = PendingIntent.getActivity(

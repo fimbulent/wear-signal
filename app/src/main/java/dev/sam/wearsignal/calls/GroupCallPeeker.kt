@@ -51,6 +51,7 @@ object GroupCallPeeker {
 
     val result = mutableMapOf<String, Int>()
     var connected = false
+    var credential: org.signal.libsignal.zkgroup.auth.AuthCredentialWithPniResponse? = null
     try {
       for (groupId in candidates) {
         val cached = cache[groupId]
@@ -62,8 +63,12 @@ object GroupCallPeeker {
           AppDeps.net.authWebSocket.connect() // the GV2 credential fetch needs it
           connected = true
         }
+        if (credential == null) {
+          // One credential covers the whole day — fetch it once, not per group.
+          credential = GroupStateResolver.todaysCredential() ?: return result
+        }
         val joined = try {
-          peek(groupId)
+          peek(groupId, credential)
         } catch (t: Throwable) {
           Log.w(TAG, "Peek failed for ${groupId.take(12)}", t)
           continue
@@ -80,7 +85,8 @@ object GroupCallPeeker {
         }
       }
     } finally {
-      if (connected) {
+      // Never tear the socket down while a call session (or a concurrent drain) owns it.
+      if (connected && !CallEngine.isSessionActive) {
         try {
           AppDeps.net.authWebSocket.disconnect()
         } catch (_: Throwable) {
@@ -90,7 +96,7 @@ object GroupCallPeeker {
     return result
   }
 
-  private fun peek(groupId: String): Int {
+  private fun peek(groupId: String, credential: org.signal.libsignal.zkgroup.auth.AuthCredentialWithPniResponse): Int {
     val masterKey = AppDeps.database.readableDatabase.rawQuery(
       "SELECT master_key FROM groups WHERE group_id = ?",
       arrayOf(groupId)
@@ -101,7 +107,7 @@ object GroupCallPeeker {
     val memberAcis = GroupStateResolver.cachedAllMembers(groupId) ?: throw IOException("Members not fetched yet")
 
     val secretParams = GroupSecretParams.deriveFromMasterKey(GroupMasterKey(masterKey))
-    val authorization = GroupStateResolver.authorizationString(secretParams) ?: throw IOException("No GV2 credential")
+    val authorization = GroupStateResolver.authorizationString(secretParams, credential)
     val membershipProof = AppDeps.net.authPushServiceSocket
       .getExternalGroupCredential(authorization)
       .token
@@ -116,7 +122,7 @@ object GroupCallPeeker {
 
     val latch = CountDownLatch(1)
     var joined = 0
-    CallEngine.peekGroupCall(BuildConfig.SIGNAL_SFU_URL, membershipProof, members) { info ->
+    CallEngine.manager().peekGroupCall(BuildConfig.SIGNAL_SFU_URL, membershipProof, members) { info ->
       joined = info.joinedMembers.size
       latch.countDown()
     }

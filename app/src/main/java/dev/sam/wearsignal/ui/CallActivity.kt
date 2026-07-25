@@ -67,6 +67,11 @@ class CallActivity : ComponentActivity() {
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
     micGranted.value = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    // Only a fresh launch may dial: a recreated activity re-delivers the original
+    // intent (removeExtra doesn't persist) and must not silently redial the peer.
+    if (savedInstanceState != null) {
+      intent.removeExtra(EXTRA_OUTGOING_PEER)
+    }
     if (micGranted.value) {
       maybeStartOutgoing()
     } else {
@@ -94,6 +99,17 @@ class CallActivity : ComponentActivity() {
           onToggleMute = { CallEngine.toggleMute() }
         )
       }
+    }
+  }
+
+  /** singleTask: a call button tapped while an instance exists lands here, not onCreate. */
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    if (micGranted.value) {
+      maybeStartOutgoing()
+    } else {
+      permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
   }
 

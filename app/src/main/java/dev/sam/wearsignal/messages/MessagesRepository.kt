@@ -293,9 +293,11 @@ class MessagesRepository(private val db: WatchDatabase) {
         if (call.startedAt > result[index].lastAt) {
           result[index] = result[index].copy(lastBody = label, lastAt = call.startedAt, lastFromSelf = call.outgoing, lastSender = "")
         }
-      } else {
+      } else if (!hasMessages(call.peer)) {
+        // Only truly call-only conversations get their own row: a peer whose messages
+        // merely fell below the page's SQL LIMIT must not materialize twice.
         val title = if (call.isGroup) {
-          groupTitle(call.peer) ?: "Group"
+          GroupStateResolver.cachedTitle(call.peer) ?: "Group"
         } else {
           contactName(call.peer) ?: call.peer.take(8)
         }
@@ -312,13 +314,13 @@ class MessagesRepository(private val db: WatchDatabase) {
     }
   }
 
-  private fun contactName(aci: String): String? =
-    db.readableDatabase.rawQuery("SELECT name FROM contacts WHERE aci = ?", arrayOf(aci)).use { cursor ->
-      if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+  private fun hasMessages(peer: String): Boolean =
+    db.readableDatabase.rawQuery("SELECT EXISTS(SELECT 1 FROM messages WHERE peer = ?)", arrayOf(peer)).use { cursor ->
+      cursor.moveToFirst() && cursor.getInt(0) == 1
     }
 
-  private fun groupTitle(groupId: String): String? =
-    db.readableDatabase.rawQuery("SELECT title FROM groups WHERE group_id = ?", arrayOf(groupId)).use { cursor ->
+  private fun contactName(aci: String): String? =
+    db.readableDatabase.rawQuery("SELECT name FROM contacts WHERE aci = ?", arrayOf(aci)).use { cursor ->
       if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
     }
 

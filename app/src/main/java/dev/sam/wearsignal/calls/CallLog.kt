@@ -57,7 +57,8 @@ object CallLog {
     }
 
     val hangup = call.hangup
-    if (hangup?.id != null) {
+    val hangupId = hangup?.id
+    if (hangup != null && hangupId != null) {
       // Accepted/declined on another of our devices upgrades the offer's missed row.
       // A normal or busy hangup is the caller giving up: the row stays missed.
       val outcome = when (hangup.type) {
@@ -67,7 +68,7 @@ object CallLog {
       }
       AppDeps.database.writableDatabase.execSQL(
         "UPDATE calls SET outcome = ?, notified = 1 WHERE peer = ? AND call_id = ?",
-        arrayOf(outcome, senderAci, hangup.id)
+        arrayOf<Any>(outcome, senderAci, hangupId)
       )
     }
     // Answers, ICE updates, busy, and opaque messages only matter to a live call.
@@ -131,18 +132,26 @@ object CallLog {
   fun recordGroupCallUpdate(groupId: String, eraId: String, at: Long) {
     AppDeps.database.writableDatabase.execSQL(
       "UPDATE groups SET active_era = ?, active_era_at = ? WHERE group_id = ? AND active_era_at < ?",
-      arrayOf(eraId, at, groupId, at)
+      arrayOf<Any>(eraId, at, groupId, at)
     )
   }
 
   /**
-   * Incoming missed calls that were never surfaced, oldest first; marks everything
-   * notified so a silent drain swallows them the same way it swallows messages.
+   * Incoming missed calls that were never surfaced, oldest first; marks exactly those
+   * rows notified (in one transaction, so a concurrent insert can't be swallowed
+   * unreturned) — a silent drain then discards them the way it discards messages.
    */
   fun takeUnnotifiedMissed(): List<Entry> {
-    val result = query("outcome = ? AND outgoing = 0 AND notified = 0", arrayOf(OUTCOME_MISSED), "started_at ASC")
-    AppDeps.database.writableDatabase.execSQL("UPDATE calls SET notified = 1 WHERE notified = 0")
-    return result
+    val db = AppDeps.database.writableDatabase
+    db.beginTransaction()
+    try {
+      val result = query("outcome = ? AND outgoing = 0 AND notified = 0", arrayOf(OUTCOME_MISSED), "started_at ASC")
+      db.execSQL("UPDATE calls SET notified = 1 WHERE outcome = ? AND outgoing = 0 AND notified = 0", arrayOf(OUTCOME_MISSED))
+      db.setTransactionSuccessful()
+      return result
+    } finally {
+      db.endTransaction()
+    }
   }
 
   /** Calls of one conversation, oldest first, for merging into the thread view. */
@@ -210,7 +219,7 @@ object CallLog {
         // (the drained offer's send time) and never un-notify.
         db.execSQL(
           "UPDATE calls SET outcome = ?, outgoing = ?, is_video = ?, notified = MAX(notified, ?) WHERE peer = ? AND call_id = ?",
-          arrayOf(outcome, if (outgoing) 1 else 0, if (isVideo) 1 else 0, if (notified) 1 else 0, peer, callId)
+          arrayOf<Any>(outcome, if (outgoing) 1 else 0, if (isVideo) 1 else 0, if (notified) 1 else 0, peer, callId)
         )
       }
     } else {

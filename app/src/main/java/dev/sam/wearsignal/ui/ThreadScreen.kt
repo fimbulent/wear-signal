@@ -79,12 +79,13 @@ fun ThreadScreen(
   onReactCustom: (MessageRow) -> Unit,
   onCall: (() -> Unit)? = null
 ) {
-  // items: title + messages + reply chip; messages load asynchronously,
-  // so scroll to the latest when they arrive rather than at creation
+  // items: title (+ ongoing-call banner) + messages + reply chip; messages load
+  // asynchronously, so scroll to the latest when they arrive rather than at creation
   val listState = rememberScalingLazyListState()
-  LaunchedEffect(messages.size) {
+  LaunchedEffect(messages.size, activeCallCount != null) {
     if (messages.isNotEmpty()) {
-      listState.scrollToItem(messages.size + 1)
+      val leadingItems = if (activeCallCount != null) 2 else 1
+      listState.scrollToItem(messages.size + leadingItems)
     }
   }
 

@@ -14,10 +14,8 @@ import org.signal.ringrtc.CallId
 import org.signal.ringrtc.CallManager
 import org.signal.ringrtc.CallSummary
 import org.signal.ringrtc.CameraControl
-import org.signal.ringrtc.GroupCall
 import org.signal.ringrtc.HttpHeader
 import org.signal.ringrtc.NetworkRoute
-import org.signal.ringrtc.PeekInfo
 import org.signal.ringrtc.Remote
 import org.webrtc.CapturerObserver
 import org.webrtc.EglBase
@@ -69,6 +67,10 @@ object CallEngine : CallManager.Observer {
    *  loop knows not to tear down the websocket underneath a starting call. */
   @Volatile
   private var sessionStarted = false
+
+  /** Bumped on every session start; lets the delayed teardown detect it went stale. */
+  @Volatile
+  private var sessionGeneration = 0
 
   val isSessionActive: Boolean get() = sessionStarted || stateFlow.value != CallState.Idle
 
@@ -127,6 +129,7 @@ object CallEngine : CallManager.Observer {
       if (isSessionActive) return@execute
       val remote = RemotePeer(peerAci)
       sessionStarted = true
+      sessionGeneration += 1
       currentPeer = remote
       currentVideo = false
       currentOutgoing = true
@@ -193,17 +196,25 @@ object CallEngine : CallManager.Observer {
    * while a session runs, or a fresh offer that can still ring. Returns false when the
    * message is history — the caller records it in [CallLog] instead.
    */
-  fun maybeHandleLive(senderAci: String, senderDeviceId: Int, ageSec: Long, call: CallMessage): Boolean {
+  fun maybeHandleLive(senderAci: String, senderDeviceId: Int, sentAt: Long, ageSec: Long, call: CallMessage): Boolean {
     val active = isSessionActive
     val offer = call.offer
     val offerId = offer?.id
 
     if (offer != null) {
-      if (offerId == null || ageSec > MAX_LIVE_OFFER_AGE_SEC) return false
+      val opaque = offer.opaque
+      if (offerId == null || opaque == null || ageSec > MAX_LIVE_OFFER_AGE_SEC) return false
       if (!active && !ringableNow()) return false
       val keys = identityKeys(senderAci, senderDeviceId) ?: return false
-      if (!active) {
+      val secondCaller = active && currentPeer?.aci != senderAci
+      if (secondCaller) {
+        // RingRTC auto-busies them; still leave a missed-call row behind.
+        CallLog.handleCallMessage(senderAci, sentAt, call)
+      }
+      val startedSession = !active
+      if (startedSession) {
         sessionStarted = true
+        sessionGeneration += 1
         currentPeer = RemotePeer(senderAci)
         currentVideo = offer.type == CallMessage.Offer.Type.OFFER_VIDEO_CALL
         currentOutgoing = false
@@ -218,19 +229,32 @@ object CallEngine : CallManager.Observer {
       } else {
         CallManager.CallMediaType.AUDIO_CALL
       }
-      return runRingRtc("receivedOffer") {
+      val routed = try {
         manager().receivedOffer(
           CallId(offerId),
           RemotePeer(senderAci),
           senderDeviceId,
-          offer.opaque!!.toByteArray(),
+          opaque.toByteArray(),
           ageSec,
           mediaType,
           AppDeps.account.deviceId,
           keys.first,
           keys.second
         )
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "receivedOffer failed", t)
+        false
       }
+      if (!routed) {
+        // The engine never took the call: unwind the session we just opened and let
+        // the caller record the offer as history instead.
+        if (startedSession) {
+          concludeToIdle(null)
+        }
+        return false
+      }
+      return true
     }
 
     if (!active) return false
@@ -370,8 +394,18 @@ object CallEngine : CallManager.Observer {
     }
   }
 
+  /** RingRTC callbacks are per-call: a busied second caller's events must not touch the active call. */
+  private fun isActiveCall(remote: Remote?): Boolean {
+    val current = currentPeer ?: return false
+    return (remote as? RemotePeer)?.recipientEquals(current) == true
+  }
+
   override fun onCallEvent(remote: Remote?, event: CallManager.CallEvent?) {
     Log.i(TAG, "onCallEvent: $event")
+    if (!isActiveCall(remote)) {
+      Log.i(TAG, "Event for a non-active call; ignoring")
+      return
+    }
     when (event) {
       CallManager.CallEvent.REMOTE_RINGING -> {
         (stateFlow.value as? CallState.Outgoing)?.let { stateFlow.value = it.copy(ringing = true) }
@@ -403,6 +437,10 @@ object CallEngine : CallManager.Observer {
 
   override fun onCallEnded(remote: Remote?, reason: CallManager.CallEndReason, summary: CallSummary) {
     Log.i(TAG, "onCallEnded: $reason")
+    if (!isActiveCall(remote)) {
+      Log.i(TAG, "Ended a non-active call; ignoring")
+      return
+    }
     val outcome = when {
       wasConnected -> CallLog.OUTCOME_ANSWERED
       reason == CallManager.CallEndReason.REMOTE_HANGUP_ACCEPTED -> CallLog.OUTCOME_ANSWERED // on our phone
@@ -413,6 +451,7 @@ object CallEngine : CallManager.Observer {
     recordCurrentCall(outcome)
     val text = when {
       wasConnected -> "Call ended"
+      reason == CallManager.CallEndReason.REMOTE_HANGUP_ACCEPTED -> "Answered on another device"
       currentOutgoing -> "No answer"
       else -> "Missed call"
     }
@@ -421,6 +460,11 @@ object CallEngine : CallManager.Observer {
   }
 
   override fun onCallConcluded(remote: Remote?) {
+    // A concluded secondary call (auto-busied) must not tear down the active one.
+    if (currentPeer != null && !isActiveCall(remote)) {
+      Log.i(TAG, "Concluded a non-active call; ignoring")
+      return
+    }
     concludeToIdle(null)
   }
 
@@ -433,9 +477,11 @@ object CallEngine : CallManager.Observer {
     if (reason != null && peer != null) {
       stateFlow.value = CallState.Ended(peer, reason)
     }
-    // Give the Ended screen a moment, then release everything (unless a new call started).
+    // Give the Ended screen a moment, then release everything — unless a new session
+    // started meanwhile (its generation bump makes this teardown stale).
+    val generation = sessionGeneration
     executor.schedule({
-      if (currentCallId == null) {
+      if (generation == sessionGeneration) {
         sessionStarted = false
         stateFlow.value = CallState.Idle
         CallSignaling.stop()
@@ -571,16 +617,6 @@ object CallEngine : CallManager.Observer {
   override fun onLowBandwidthForVideo(remote: Remote?, recovered: Boolean) = Unit
 
   // endregion
-
-  /** Asks the SFU who is in a group call. [handler] runs on RingRTC's worker thread. */
-  fun peekGroupCall(
-    sfuUrl: String,
-    membershipProof: ByteArray,
-    members: Collection<GroupCall.GroupMemberInfo>,
-    handler: (PeekInfo) -> Unit
-  ) {
-    manager().peekGroupCall(sfuUrl, membershipProof, members) { info -> handler(info) }
-  }
 
   private fun startAudio() {
     val audioManager = AppDeps.context.getSystemService(AudioManager::class.java) ?: return

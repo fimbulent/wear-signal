@@ -76,7 +76,9 @@ class NotificationPresenter(private val context: Context) {
         .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .build()
-      manager.notify((call.startedAt % Int.MAX_VALUE).toInt() + index, notification)
+      // Distinct id space from message notifications (those use raw sentAt % MAX),
+      // so a call and a message with the same timestamp can't replace each other.
+      manager.notify("call:${call.startedAt}:$index".hashCode(), notification)
     }
   }
 

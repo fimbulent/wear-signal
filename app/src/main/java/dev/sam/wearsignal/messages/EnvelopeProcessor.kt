@@ -122,19 +122,27 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
     content.pniSignatureMessage?.let { handlePniSignature(sourceServiceId, it) }
 
     content.callMessage?.let { call ->
+      // Device-targeted signaling meant for another of our devices (e.g. ICE for the
+      // phone's leg after it answered) must not leak into our engine or history.
+      val targetDevice = call.destinationDeviceId
+      if (targetDevice != null && targetDevice != account.deviceId) {
+        return null
+      }
       // Fresh offers (and anything belonging to a live session) go straight into the
       // calling engine so the watch can actually ring; everything else is history.
+      val sentAt = envelope.clientTimestamp ?: serverDeliveredTimestamp
       val ageSec = ((serverDeliveredTimestamp - (envelope.serverTimestamp ?: serverDeliveredTimestamp)).coerceAtLeast(0)) / 1000
       val handledLive = CallEngine.maybeHandleLive(
         senderAci = sourceServiceId.toString(),
         senderDeviceId = result.metadata.sourceDeviceId,
+        sentAt = sentAt,
         ageSec = ageSec,
         call = call
       )
       if (!handledLive) {
         CallLog.handleCallMessage(
           senderAci = sourceServiceId.toString(),
-          sentAt = envelope.clientTimestamp ?: serverDeliveredTimestamp,
+          sentAt = sentAt,
           call = call
         )
       }
