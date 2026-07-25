@@ -45,8 +45,10 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.messages.MessageRow
 import dev.sam.wearsignal.messages.attachmentPlaceholder
+import dev.sam.wearsignal.messages.callLabel
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -100,17 +102,21 @@ fun ThreadScreen(
       items(messages.size) { i ->
         val message = messages[i]
         // Collapse repeated sender chrome when the same person sends several in a row.
-        val firstOfRun = i == 0 || messages[i - 1].senderAci != message.senderAci
+        val firstOfRun = i == 0 || messages[i - 1].senderAci != message.senderAci || messages[i - 1].call != null
         Column {
           if (i == 0 || !sameDay(messages[i - 1].sentAt, message.sentAt)) {
             DayDivider(message.sentAt)
           }
-          MessageBubble(
-            message = message,
-            isGroup = isGroup,
-            showSender = firstOfRun,
-            onLongPress = { reactingTo = message }
-          )
+          if (message.call != null) {
+            CallEventRow(message)
+          } else {
+            MessageBubble(
+              message = message,
+              isGroup = isGroup,
+              showSender = firstOfRun,
+              onLongPress = { reactingTo = message }
+            )
+          }
         }
       }
 
@@ -275,6 +281,26 @@ private fun AttachmentContent(message: MessageRow, contentColor: Color, modifier
       style = MaterialTheme.typography.body2,
       color = contentColor.copy(alpha = 0.7f),
       modifier = modifier
+    )
+  }
+}
+
+/** A call event as a centered pill: "☎ Missed call · 14:03", missed in warning red. */
+@Composable
+private fun CallEventRow(message: MessageRow) {
+  val call = message.call ?: return
+  val missed = call.outcome == CallLog.OUTCOME_MISSED && !call.outgoing
+  val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(message.sentAt))
+  Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+    Text(
+      text = "${if (call.isVideo) "📹" else "☎"} ${callLabel(call)} · $time",
+      style = MaterialTheme.typography.caption2,
+      color = if (missed) Color(0xFFFF8A80) else Color(0xFF9E9E9E),
+      modifier = Modifier
+        .align(Alignment.Center)
+        .clip(RoundedCornerShape(10.dp))
+        .background(INCOMING_BUBBLE)
+        .padding(horizontal = 8.dp, vertical = 3.dp)
     )
   }
 }

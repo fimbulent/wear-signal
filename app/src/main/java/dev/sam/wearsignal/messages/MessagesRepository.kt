@@ -1,6 +1,7 @@
 package dev.sam.wearsignal.messages
 
 import android.content.ContentValues
+import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.db.WatchDatabase
 
 /** One conversation in the conversation list, keyed by [peer] (group id or 1:1 ACI). */
@@ -28,7 +29,9 @@ data class MessageRow(
   /** Local file of the downloaded (downscaled) image, when available. */
   val attachmentPath: String? = null,
   /** Emoji reactions to this message, grouped per emoji, most-used first. */
-  val reactions: List<MessageReaction> = emptyList()
+  val reactions: List<MessageReaction> = emptyList(),
+  /** Set when this row is a call event rather than a message. */
+  val call: CallInfo? = null
 ) {
   /** The emoji we reacted with, if any (one reaction per person, like Signal). */
   val myReaction: String? get() = reactions.firstOrNull { it.mine }?.emoji
@@ -40,9 +43,27 @@ data class MessageReaction(val emoji: String, val count: Int, val mine: Boolean)
 /** An incoming message newly marked seen: its author and sent timestamp (Signal's message key). */
 data class SeenMessage(val senderAci: String, val sentAt: Long)
 
+/** A call event rendered inside a thread ([CallLog] outcome values). */
+data class CallInfo(
+  val isVideo: Boolean,
+  val outgoing: Boolean,
+  val outcome: String
+)
+
 /** Placeholder body text for attachment messages ("📷 Photo" / "📎 Attachment"). */
 fun attachmentPlaceholder(contentType: String?): String =
   if (contentType?.startsWith("image/") == true) "📷 Photo" else "📎 Attachment"
+
+/** Thread/conversation-list label for a call event. */
+fun callLabel(call: CallInfo): String = when {
+  call.outcome == CallLog.OUTCOME_MISSED && !call.outgoing ->
+    if (call.isVideo) "Missed video call" else "Missed call"
+  call.outcome == CallLog.OUTCOME_MISSED -> "Unanswered call"
+  call.outcome == CallLog.OUTCOME_DECLINED -> "Declined call"
+  call.outcome == CallLog.OUTCOME_OBSERVED -> "Group call"
+  call.outgoing -> if (call.isVideo) "Outgoing video call" else "Outgoing call"
+  else -> if (call.isVideo) "Incoming video call" else "Incoming call"
+}
 
 /**
  * Stores and reads decrypted messages, grouped into conversations by peer
@@ -183,7 +204,9 @@ class MessagesRepository(private val db: WatchDatabase) {
         )
       }
     }
-    return result
+    mergeCalls(result)
+    result.sortByDescending { it.lastAt }
+    return result.take(limit)
   }
 
   /**
@@ -258,8 +281,51 @@ class MessagesRepository(private val db: WatchDatabase) {
   }
 
   /**
+   * Folds the latest call of each conversation into the list: newer than the last
+   * message → shown as the preview line; conversation with calls only → its own row.
+   * Call previews carry no sender prefix (lastSender empty).
+   */
+  private fun mergeCalls(result: MutableList<ConversationRow>) {
+    for (call in CallLog.lastCallPerPeer()) {
+      val label = callLabel(CallInfo(call.isVideo, call.outgoing, call.outcome))
+      val index = result.indexOfFirst { it.peer == call.peer }
+      if (index >= 0) {
+        if (call.startedAt > result[index].lastAt) {
+          result[index] = result[index].copy(lastBody = label, lastAt = call.startedAt, lastFromSelf = call.outgoing, lastSender = "")
+        }
+      } else {
+        val title = if (call.isGroup) {
+          groupTitle(call.peer) ?: "Group"
+        } else {
+          contactName(call.peer) ?: call.peer.take(8)
+        }
+        result += ConversationRow(
+          peer = call.peer,
+          title = title,
+          isGroup = call.isGroup,
+          lastBody = label,
+          lastAt = call.startedAt,
+          lastFromSelf = call.outgoing,
+          lastSender = ""
+        )
+      }
+    }
+  }
+
+  private fun contactName(aci: String): String? =
+    db.readableDatabase.rawQuery("SELECT name FROM contacts WHERE aci = ?", arrayOf(aci)).use { cursor ->
+      if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+    }
+
+  private fun groupTitle(groupId: String): String? =
+    db.readableDatabase.rawQuery("SELECT title FROM groups WHERE group_id = ?", arrayOf(groupId)).use { cursor ->
+      if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+    }
+
+  /**
    * Messages of one conversation, oldest first, with sender names resolved from the contacts
    * cache and reactions attached. [selfAci] identifies our own reactions (for the toggle UI).
+   * Call events are merged in as their own rows.
    */
   fun thread(peer: String, selfAci: String? = null): List<MessageRow> {
     val reactionsByTarget = threadReactions(peer, selfAci)
@@ -297,6 +363,17 @@ class MessagesRepository(private val db: WatchDatabase) {
         )
       }
     }
+    for (call in CallLog.callsFor(peer)) {
+      result += MessageRow(
+        sender = if (call.outgoing) "Me" else "",
+        senderAci = if (call.outgoing) "" else call.peer,
+        body = "",
+        sentAt = call.startedAt,
+        fromSelf = call.outgoing,
+        call = CallInfo(call.isVideo, call.outgoing, call.outcome)
+      )
+    }
+    result.sortBy { it.sentAt }
     return result
   }
 

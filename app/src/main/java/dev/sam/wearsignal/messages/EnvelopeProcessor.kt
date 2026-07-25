@@ -2,6 +2,7 @@ package dev.sam.wearsignal.messages
 
 import dev.sam.wearsignal.AppDeps
 import dev.sam.wearsignal.BuildConfig
+import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.crypto.SessionLock
 import org.signal.core.models.ServiceId
 import org.signal.core.models.ServiceId.ACI
@@ -119,11 +120,32 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
     // are the same account, which lets us fold the two conversations into one.
     content.pniSignatureMessage?.let { handlePniSignature(sourceServiceId, it) }
 
+    content.callMessage?.let { call ->
+      CallLog.handleCallMessage(
+        senderAci = sourceServiceId.toString(),
+        sentAt = envelope.clientTimestamp ?: serverDeliveredTimestamp,
+        call = call
+      )
+      return null
+    }
+
+    content.syncMessage?.callEvent?.let { event ->
+      CallLog.handleSyncCallEvent(event)
+      return null
+    }
+
     content.dataMessage?.let { data ->
       harvestProfileKey(sourceServiceId, data)
       data.reaction?.let { reaction ->
         val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
         applyReaction(reaction, peer = groupId ?: sourceServiceId.toString(), reacterAci = sourceServiceId.toString())
+        return null
+      }
+      data.groupCallUpdate?.eraId?.let { eraId ->
+        val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
+        if (groupId != null) {
+          CallLog.recordGroupCallUpdate(groupId, eraId, data.timestamp ?: serverDeliveredTimestamp)
+        }
         return null
       }
       val body = data.body

@@ -1,6 +1,7 @@
 package dev.sam.wearsignal.poll
 
 import dev.sam.wearsignal.AppDeps
+import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.messages.GroupStateResolver
 import dev.sam.wearsignal.messages.ProfileNameResolver
 import dev.sam.wearsignal.tile.Glanceables
@@ -37,9 +38,14 @@ object Poller {
       return Result.Failure("Couldn't connect")
     }
 
-    // Resolve names, group state, and photos for new senders, plus any contacts/groups
-    // still awaiting an avatar backfill (cheap no-op once everything is fetched).
-    val pendingAcis = newMessages.filterNot { it.fromSelf }.map { it.senderAci } + ProfileNameResolver.pendingAvatarAcis()
+    // Take even on silent drains: they swallow missed-call alerts the way they swallow messages.
+    val missedCalls = CallLog.takeUnnotifiedMissed()
+
+    // Resolve names, group state, and photos for new senders and callers, plus any
+    // contacts/groups still awaiting an avatar backfill (cheap no-op once fetched).
+    val pendingAcis = newMessages.filterNot { it.fromSelf }.map { it.senderAci } +
+      missedCalls.filterNot { it.isGroup }.map { it.peer } +
+      ProfileNameResolver.pendingAvatarAcis()
     val pendingGroups = newMessages.mapNotNull { it.groupId } + GroupStateResolver.pendingAvatarGroupIds()
     if (pendingAcis.isNotEmpty() || pendingGroups.isNotEmpty()) {
       ProfileNameResolver.resolvePending(pendingAcis)
@@ -55,6 +61,7 @@ object Poller {
 
     if (!silent) {
       AppDeps.notifier.notify(newMessages) { aci -> resolveName(aci) }
+      AppDeps.notifier.notifyMissedCalls(missedCalls) { aci -> resolveName(aci) }
     }
 
     Glanceables.requestUpdate(AppDeps.context)

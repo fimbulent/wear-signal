@@ -87,7 +87,7 @@ fun ConversationsScreen(
               overflow = TextOverflow.Ellipsis
             )
             Text(
-              text = if (conversation.isGroup || conversation.lastFromSelf) {
+              text = if ((conversation.isGroup || conversation.lastFromSelf) && conversation.lastSender.isNotEmpty()) {
                 "${conversation.lastSender}: ${conversation.lastBody}"
               } else {
                 conversation.lastBody

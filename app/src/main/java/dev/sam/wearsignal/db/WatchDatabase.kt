@@ -8,12 +8,13 @@ import android.database.sqlite.SQLiteOpenHelper
  * Single SQLite database holding the Signal protocol stores (per account identity: "aci"/"pni"),
  * received messages, and the contact-name cache.
  */
-class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db", null, 8) {
+class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db", null, 9) {
 
   override fun onCreate(db: SQLiteDatabase) {
     createDirectoryTable(db)
     createGroupsTable(db)
     createReactionsTable(db)
+    createCallsTable(db)
     db.execSQL(
       """
       CREATE TABLE identities (
@@ -167,6 +168,11 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
     if (oldVersion < 8) {
       createReactionsTable(db)
     }
+    if (oldVersion < 9) {
+      createCallsTable(db)
+      db.execSQL("ALTER TABLE groups ADD COLUMN active_era TEXT")
+      db.execSQL("ALTER TABLE groups ADD COLUMN active_era_at INTEGER NOT NULL DEFAULT 0")
+    }
   }
 
   /**
@@ -189,6 +195,29 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
     )
   }
 
+  /**
+   * Call history, keyed by Signal's call id within a conversation. Populated from drained
+   * 1:1 call signaling and the phone's CallEvent sync messages (see CallLog).
+   */
+  private fun createCallsTable(db: SQLiteDatabase) {
+    db.execSQL(
+      """
+      CREATE TABLE calls (
+        _id INTEGER PRIMARY KEY AUTOINCREMENT,
+        call_id INTEGER NOT NULL,
+        peer TEXT NOT NULL,
+        is_group INTEGER NOT NULL DEFAULT 0,
+        is_video INTEGER NOT NULL DEFAULT 0,
+        outgoing INTEGER NOT NULL DEFAULT 0,
+        outcome TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        notified INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (peer, call_id)
+      )
+      """
+    )
+  }
+
   /** GroupsV2 state cache: master key harvested from message contexts, title/members fetched from the group server. */
   private fun createGroupsTable(db: SQLiteDatabase) {
     db.execSQL(
@@ -200,7 +229,9 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
         title TEXT,
         members TEXT,
         fetched_at INTEGER NOT NULL DEFAULT 0,
-        avatar_fetched_at INTEGER NOT NULL DEFAULT 0
+        avatar_fetched_at INTEGER NOT NULL DEFAULT 0,
+        active_era TEXT,
+        active_era_at INTEGER NOT NULL DEFAULT 0
       )
       """
     )
