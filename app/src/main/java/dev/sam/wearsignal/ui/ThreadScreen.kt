@@ -72,6 +72,7 @@ fun ThreadScreen(
   messages: List<MessageRow>,
   polling: Boolean,
   pollStatus: String?,
+  activeCallCount: Int? = null,
   onPoll: () -> Unit,
   onReply: () -> Unit,
   onReact: (MessageRow, String) -> Unit,
@@ -97,6 +98,18 @@ fun ThreadScreen(
           textAlign = TextAlign.Center,
           modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
         )
+      }
+
+      if (activeCallCount != null) {
+        item {
+          Text(
+            text = "📞 Ongoing call · $activeCallCount in call",
+            style = MaterialTheme.typography.caption2,
+            color = Color(0xFF69F0AE),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+          )
+        }
       }
 
       items(messages.size) { i ->

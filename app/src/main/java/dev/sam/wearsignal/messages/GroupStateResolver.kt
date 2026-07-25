@@ -116,6 +116,32 @@ object GroupStateResolver {
     }
   }
 
+  /**
+   * Today's GroupsV2 authorization for [secretParams] (fetches a fresh zkgroup credential).
+   * Call while the websocket is usable. Null when the credential can't be obtained.
+   */
+  fun authorizationString(secretParams: GroupSecretParams): org.whispersystems.signalservice.api.groupsv2.GroupsV2AuthorizationString? {
+    val credential = fetchTodaysCredential() ?: return null
+    return AppDeps.net.groupsV2Api.getGroupsV2AuthorizationString(
+      AppDeps.account.aci,
+      AppDeps.account.pni,
+      todaySeconds(),
+      secretParams,
+      credential
+    )
+  }
+
+  /** Cached member ACIs for a group including self, or null if the state was never fetched. */
+  fun cachedAllMembers(groupId: String): List<String>? {
+    AppDeps.database.readableDatabase.rawQuery(
+      "SELECT members FROM groups WHERE group_id = ?",
+      arrayOf(groupId)
+    ).use { cursor ->
+      if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+      return cursor.getString(0).split(",").filter { it.isNotEmpty() }
+    }
+  }
+
   /** Cached member ACIs for a group (excluding self), or null if the state was never fetched. */
   fun cachedMembers(groupId: String): List<String>? {
     val selfAci = AppDeps.account.aci?.toString()

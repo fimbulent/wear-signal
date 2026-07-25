@@ -22,6 +22,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import androidx.wear.input.RemoteInputIntentHelper
 import dev.sam.wearsignal.AppDeps
+import dev.sam.wearsignal.calls.GroupCallPeeker
 import dev.sam.wearsignal.link.LinkingViewModel
 import dev.sam.wearsignal.messages.ConversationRow
 import dev.sam.wearsignal.messages.MessageRow
@@ -61,6 +62,18 @@ fun WearSignalNavHost() {
   var polling by remember { mutableStateOf(false) }
   var pollCount by remember { mutableIntStateOf(0) } // bumped after each poll so screens reload
   var pollStatus by remember { mutableStateOf<String?>(null) } // error text when the last poll failed
+
+  // Group calls confirmed live by an SFU peek: peer → joined member count.
+  var activeGroupCalls by remember { mutableStateOf(mapOf<String, Int>()) }
+  LaunchedEffect(pollCount) {
+    activeGroupCalls = withContext(Dispatchers.IO) {
+      try {
+        GroupCallPeeker.refresh()
+      } catch (t: Throwable) {
+        emptyMap()
+      }
+    }
+  }
 
   fun pollNow() {
     if (polling) return
@@ -104,6 +117,7 @@ fun WearSignalNavHost() {
         hasMore = conversations.size > limit,
         polling = polling,
         pollStatus = pollStatus,
+        activeCalls = activeGroupCalls,
         onPoll = { pollNow() },
         onLoadMore = { limit += 10 },
         onOpen = { conversation ->
@@ -164,6 +178,7 @@ fun WearSignalNavHost() {
         messages = messages,
         polling = polling,
         pollStatus = pollStatus,
+        activeCallCount = activeGroupCalls[conversation.peer],
         onPoll = { pollNow() },
         onReply = { send(conversation.peer, conversation.isGroup, conversation.title) },
         onReact = ::react,
