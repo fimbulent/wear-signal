@@ -92,8 +92,20 @@ object CallEngine : CallManager.Observer {
 
   private val eglBase: EglBase by lazy { EglBase.create() }
   private val dropFramesSink = VideoSink { } // remote video decoded but never rendered
-  private val noCamera = object : CameraControl {
-    override fun hasCapturer(): Boolean = false
+
+  /**
+   * A camera that exists but never yields a frame. RingRTC only builds the local video
+   * track — and only then adds a video transceiver, which is what puts the m=video
+   * section in the offer — when hasCapturer() is true. Reporting no capturer produces
+   * an audio-only SDP, and a Signal peer can't negotiate that: it drops the call and
+   * files it as missed without ever ringing (a Signal "audio call" is really a video
+   * call that starts camera-off, which is why video can be switched on mid-call).
+   *
+   * So we claim a capturer, accept the observer and never feed it, and never enable
+   * video — which is exactly what a camera-off call looks like on the wire.
+   */
+  private val darkCamera = object : CameraControl {
+    override fun hasCapturer(): Boolean = true
     override fun initCapturer(observer: CapturerObserver) = Unit
     override fun setEnabled(enable: Boolean) = Unit
     override fun flip() = Unit
@@ -355,14 +367,16 @@ object CallEngine : CallManager.Observer {
           org.signal.ringrtc.AudioConfig(),
           dropFramesSink,
           dropFramesSink,
-          noCamera,
+          darkCamera,
           servers,
           false, // hideIp: allow direct connections, like Signal with known contacts
-          CallManager.DataMode.NORMAL,
+          // Video is negotiated but never rendered, so keep whatever the peer sends if
+          // they enable their camera down to the cheapest stream they'll produce.
+          CallManager.DataMode.LOW,
           null, // no audio level callbacks
           null, // default DRED duration
-          false, // no software VP9 — video stays off
-          false // never enable the (nonexistent) camera
+          false, // no software VP9: costly to decode on a watch, and never displayed
+          false // never enable the camera we don't have
         )
       } catch (t: Throwable) {
         Log.w(TAG, "proceed() failed", t)
