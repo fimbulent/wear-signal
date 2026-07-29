@@ -303,19 +303,29 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
   private fun markSeenFromSync(markers: List<Pair<ServiceId?, Long?>>) {
     val db = AppDeps.database.writableDatabase
     val now = System.currentTimeMillis()
+    val seen = mutableListOf<SeenMessage>()
     for ((sender, timestamp) in markers) {
       if (timestamp == null) continue
-      if (sender != null) {
-        db.execSQL(
-          "UPDATE messages SET seen_at = ? WHERE from_self = 0 AND seen_at = 0 AND sent_at = ? AND sender_aci = ?",
-          arrayOf(now, timestamp, sender.toString())
-        )
-      } else {
-        db.execSQL(
-          "UPDATE messages SET seen_at = ? WHERE from_self = 0 AND seen_at = 0 AND sent_at = ?",
-          arrayOf(now, timestamp)
-        )
+      // Collect the matching rows before updating: their (sender, sentAt) identify any
+      // notifications already posted for them, which are stale now.
+      val senderClause = if (sender != null) " AND sender_aci = ?" else ""
+      val args = if (sender != null) arrayOf(timestamp.toString(), sender.toString()) else arrayOf(timestamp.toString())
+      db.rawQuery(
+        "SELECT sender_aci, sent_at FROM messages WHERE from_self = 0 AND seen_at = 0 AND sent_at = ?$senderClause",
+        args
+      ).use { cursor ->
+        while (cursor.moveToNext()) {
+          seen += SeenMessage(senderAci = cursor.getString(0), sentAt = cursor.getLong(1))
+        }
       }
+      db.execSQL(
+        "UPDATE messages SET seen_at = ? WHERE from_self = 0 AND seen_at = 0 AND sent_at = ?$senderClause",
+        arrayOf(now.toString()) + args
+      )
+    }
+    if (seen.isNotEmpty()) {
+      AppDeps.notifier.cancelMessages(seen)
+      DataChanges.bumpMessages()
     }
   }
 

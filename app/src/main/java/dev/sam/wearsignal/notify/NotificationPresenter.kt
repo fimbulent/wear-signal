@@ -13,6 +13,7 @@ import androidx.core.app.RemoteInput
 import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.messages.EnvelopeProcessor
 import dev.sam.wearsignal.messages.GroupStateResolver
+import dev.sam.wearsignal.messages.SeenMessage
 import dev.sam.wearsignal.messages.attachmentPlaceholder
 import dev.sam.wearsignal.ui.MainActivity
 import org.signal.core.util.logging.Log
@@ -30,6 +31,9 @@ class NotificationPresenter(private val context: Context) {
     const val EXTRA_PEER = "peer"
     const val EXTRA_IS_GROUP = "is_group"
     const val EXTRA_NOTIFICATION_ID = "notification_id"
+
+    /** Stable per-message id so a later read (local or synced) can cancel the notification. */
+    fun messageNotificationId(senderAci: String, sentAt: Long): Int = "msg:$senderAci:$sentAt".hashCode()
   }
 
   init {
@@ -76,7 +80,7 @@ class NotificationPresenter(private val context: Context) {
         .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .build()
-      // Distinct id space from message notifications (those use raw sentAt % MAX),
+      // Distinct id space from message notifications (those hash a "msg:" prefix),
       // so a call and a message with the same timestamp can't replace each other.
       manager.notify("call:${call.startedAt}:$index".hashCode(), notification)
     }
@@ -103,7 +107,7 @@ class NotificationPresenter(private val context: Context) {
       val title = message.groupId
         ?.let { groupId -> GroupStateResolver.cachedTitle(groupId)?.let { "$sender @ $it" } ?: "$sender (group)" }
         ?: sender
-      val notificationId = (message.sentAt % Int.MAX_VALUE).toInt() + index
+      val notificationId = messageNotificationId(message.senderAci, message.sentAt)
       val builder = NotificationCompat.Builder(context, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_dialog_email)
         .setContentTitle(title)
@@ -118,6 +122,15 @@ class NotificationPresenter(private val context: Context) {
       builder.addAction(buildReplyAction(message.peer, message.groupId != null, notificationId))
 
       manager.notify(notificationId, builder.build())
+    }
+  }
+
+  /** Retracts message notifications once they're read (thread opened here, or synced from the phone). */
+  fun cancelMessages(messages: List<SeenMessage>) {
+    if (messages.isEmpty()) return
+    val manager = NotificationManagerCompat.from(context)
+    for (message in messages) {
+      manager.cancel(messageNotificationId(message.senderAci, message.sentAt))
     }
   }
 

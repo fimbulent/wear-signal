@@ -68,7 +68,10 @@ object Poller {
     AppDeps.attachments.downloadPending()
 
     if (!silent) {
-      AppDeps.notifier.notify(newMessages) { aci -> resolveName(aci) }
+      // A read sync drained in this same batch may have already marked some of these seen
+      // (read on the phone minutes ago) — notifying for those would be stale noise.
+      val unseen = newMessages.filterNot { it.fromSelf || AppDeps.messages.isSeen(it.senderAci, it.sentAt) }
+      AppDeps.notifier.notify(unseen) { aci -> resolveName(aci) }
       AppDeps.notifier.notifyMissedCalls(missedCalls) { aci -> resolveName(aci) }
     }
 

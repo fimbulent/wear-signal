@@ -149,6 +149,8 @@ fun WearSignalNavHost() {
           AppDeps.messages.markThreadSeen(conversation.peer)
         }
         if (newlySeen.isNotEmpty()) {
+          // Reading here retracts any notifications still showing for these messages.
+          AppDeps.notifier.cancelMessages(newlySeen)
           Glanceables.requestUpdate(context)
           // Only an open thread counts as reading for the rest of Signal — never the
           // conversation list or the glanceables. Sync to our devices always; receipts
