@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +26,7 @@ import dev.sam.wearsignal.AppDeps
 import dev.sam.wearsignal.calls.GroupCallPeeker
 import dev.sam.wearsignal.link.LinkingViewModel
 import dev.sam.wearsignal.messages.ConversationRow
+import dev.sam.wearsignal.messages.DataChanges
 import dev.sam.wearsignal.messages.MessageRow
 import dev.sam.wearsignal.messages.MessageSender
 import dev.sam.wearsignal.poll.MaintenanceWorker
@@ -62,6 +64,9 @@ fun WearSignalNavHost() {
   var polling by remember { mutableStateOf(false) }
   var pollCount by remember { mutableIntStateOf(0) } // bumped after each poll so screens reload
   var pollStatus by remember { mutableStateOf<String?>(null) } // error text when the last poll failed
+  // Reloads screens when message data changes underneath them — e.g. a background poll
+  // stores a message while a thread is open, or while the app sits resumed in the recents.
+  val dataVersion by DataChanges.messagesVersion.collectAsState()
 
   // Group calls confirmed live by an SFU peek: peer → joined member count.
   var activeGroupCalls by remember { mutableStateOf(mapOf<String, Int>()) }
@@ -108,7 +113,7 @@ fun WearSignalNavHost() {
     composable("conversations") {
       var limit by remember { mutableIntStateOf(10) }
       var conversations by remember { mutableStateOf(listOf<ConversationRow>()) }
-      LaunchedEffect(pollCount, limit) {
+      LaunchedEffect(pollCount, limit, dataVersion) {
         // one extra row tells us whether "Load more" has anything to load
         conversations = withContext(Dispatchers.IO) { AppDeps.messages.conversations(limit + 1) }
       }
@@ -137,7 +142,7 @@ fun WearSignalNavHost() {
       var messages by remember { mutableStateOf(listOf<MessageRow>()) }
       var refreshKey by remember { mutableIntStateOf(0) }
       val context = LocalContext.current
-      LaunchedEffect(refreshKey, pollCount) {
+      LaunchedEffect(refreshKey, pollCount, dataVersion) {
         val newlySeen = withContext(Dispatchers.IO) {
           messages = AppDeps.messages.thread(conversation.peer, AppDeps.account.aci?.toString())
           // Viewing the thread counts as reading: clear these from the tile/complication unread count.

@@ -101,6 +101,7 @@ class AttachmentStore(context: Context) {
         "UPDATE messages SET attachment_path = ?, attachment_pointer = NULL WHERE _id = ?",
         arrayOf(file.path, messageId)
       )
+      DataChanges.bumpMessages()
       Log.i(TAG, "Downloaded attachment for message $messageId (${file.length() / 1024} KB)")
     } finally {
       encrypted.delete()

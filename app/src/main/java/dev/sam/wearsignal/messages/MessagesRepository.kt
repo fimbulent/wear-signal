@@ -108,6 +108,7 @@ class MessagesRepository(private val db: WatchDatabase) {
       arrayOf(peer, peer)
     )
     pruneOrphanedReactions(peer)
+    DataChanges.bumpMessages()
   }
 
   /** Drops reactions whose target message no longer exists (pruned past the cap or merged away). */
@@ -136,11 +137,13 @@ class MessagesRepository(private val db: WatchDatabase) {
     remove: Boolean
   ): Boolean {
     if (remove) {
-      return db.writableDatabase.delete(
+      val removed = db.writableDatabase.delete(
         "reactions",
         "target_sent_at = ? AND target_author_aci = ? AND reacter_aci = ?",
         arrayOf(targetSentAt.toString(), targetAuthorAci, reacterAci)
       ) > 0
+      if (removed) DataChanges.bumpMessages()
+      return removed
     }
     val targetExists = db.readableDatabase.rawQuery(
       "SELECT 1 FROM messages WHERE peer = ? AND sent_at = ? AND sender_aci = ? LIMIT 1",
@@ -157,6 +160,7 @@ class MessagesRepository(private val db: WatchDatabase) {
       put("at", System.currentTimeMillis())
     }
     db.writableDatabase.insertWithOnConflict("reactions", null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
+    DataChanges.bumpMessages()
     return true
   }
 
@@ -236,8 +240,19 @@ class MessagesRepository(private val db: WatchDatabase) {
     if (seen.isNotEmpty()) {
       val values = ContentValues().apply { put("seen_at", System.currentTimeMillis()) }
       db.writableDatabase.update("messages", values, "peer = ? AND from_self = 0 AND seen_at = 0", arrayOf(peer))
+      DataChanges.bumpMessages()
     }
     return seen
+  }
+
+  /** True if this incoming message is already seen (read here or synced from another device). */
+  fun isSeen(senderAci: String, sentAt: Long): Boolean {
+    db.readableDatabase.rawQuery(
+      "SELECT 1 FROM messages WHERE sender_aci = ? AND sent_at = ? AND from_self = 0 AND seen_at > 0 LIMIT 1",
+      arrayOf(senderAci, sentAt.toString())
+    ).use { cursor ->
+      return cursor.moveToFirst()
+    }
   }
 
   /**
@@ -276,6 +291,7 @@ class MessagesRepository(private val db: WatchDatabase) {
         arrayOf(aci, aci)
       )
       pruneOrphanedReactions(aci)
+      DataChanges.bumpMessages()
     }
     return moved > 0 || directoryMoved > 0
   }
