@@ -5,6 +5,7 @@ import dev.sam.wearsignal.BuildConfig
 import dev.sam.wearsignal.calls.CallEngine
 import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.crypto.SessionLock
+import dev.sam.wearsignal.poll.Poller
 import org.signal.core.models.ServiceId
 import org.signal.core.models.ServiceId.ACI
 import org.signal.core.models.ServiceId.PNI
@@ -156,6 +157,13 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
 
     content.dataMessage?.let { data ->
       harvestProfileKey(sourceServiceId, data)
+      data.delete?.targetSentTimestamp?.let { targetSentAt ->
+        // Delete-for-everyone. Matching by the envelope's sender enforces Signal's rule
+        // that only the author can delete their message.
+        val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
+        applyRemoteDelete(peer = groupId ?: sourceServiceId.toString(), targetSentAt = targetSentAt, authorAci = sourceServiceId.toString())
+        return null
+      }
       data.reaction?.let { reaction ->
         val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
         applyReaction(reaction, peer = groupId ?: sourceServiceId.toString(), reacterAci = sourceServiceId.toString())
@@ -186,6 +194,23 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
       )
     }
 
+    content.editMessage?.let { edit ->
+      // An edit is a full replacement DataMessage targeting an earlier one by sent timestamp
+      // (of its latest revision — Signal chains edits). Attachments can't change in an edit,
+      // so only the body is applied.
+      val data = edit.dataMessage ?: return null
+      harvestProfileKey(sourceServiceId, data)
+      val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
+      applyEdit(
+        peer = groupId ?: sourceServiceId.toString(),
+        authorAci = sourceServiceId.toString(),
+        targetSentAt = edit.targetSentTimestamp,
+        newBody = data.body.orEmpty(),
+        newSentAt = data.timestamp ?: envelope.clientTimestamp ?: serverDeliveredTimestamp
+      )
+      return null
+    }
+
     content.syncMessage?.let { sync ->
       // Read/viewed markers from our other devices (e.g. the message was read on the
       // phone): those incoming messages are no longer unread on the watch either.
@@ -197,7 +222,30 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
     }
 
     content.syncMessage?.sent?.let { sent ->
+      sent.editMessage?.let { edit ->
+        // An edit we made on the phone: apply it to our own message.
+        val data = edit.dataMessage ?: return null
+        val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
+        val destination = ServiceId.parseOrNull(sent.destinationServiceId, sent.destinationServiceIdBinary)?.toString()
+        val peer = groupId ?: destination ?: return null
+        applyEdit(
+          peer = peer,
+          authorAci = selfAci.toString(),
+          targetSentAt = edit.targetSentTimestamp,
+          newBody = data.body.orEmpty(),
+          newSentAt = sent.timestamp ?: data.timestamp ?: serverDeliveredTimestamp
+        )
+        return null
+      }
       val data = sent.message ?: return null
+      data.delete?.targetSentTimestamp?.let { targetSentAt ->
+        // A delete-for-everyone we sent from the phone: tombstone our own message.
+        val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
+        val destination = ServiceId.parseOrNull(sent.destinationServiceId, sent.destinationServiceIdBinary)?.toString()
+        val peer = groupId ?: destination ?: return null
+        applyRemoteDelete(peer = peer, targetSentAt = targetSentAt, authorAci = selfAci.toString())
+        return null
+      }
       data.reaction?.let { reaction ->
         // A reaction we made on another device (the phone): apply it as our own.
         val groupId = data.groupV2?.let { recordGroup(it.masterKey!!.toByteArray(), it.revision ?: 0) }
@@ -251,7 +299,8 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
 
   /**
    * Marks our sent messages (matched by sent timestamp) delivered or read.
-   * Read implies delivered. Group receipts from any member count.
+   * Read implies delivered. Group receipts from any member count. Receipts for an
+   * edited message reference the revision the recipient got, hence the revised_at leg.
    */
   private fun markReceipts(sentTimestamps: List<Long>, read: Boolean) {
     if (sentTimestamps.isEmpty()) return
@@ -262,14 +311,14 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
         db.execSQL(
           "UPDATE messages SET read_at = CASE WHEN read_at = 0 THEN ? ELSE read_at END, " +
             "delivered_at = CASE WHEN delivered_at = 0 THEN ? ELSE delivered_at END " +
-            "WHERE from_self = 1 AND sent_at = ?",
-          arrayOf(now, now, sentAt)
+            "WHERE from_self = 1 AND (sent_at = ? OR revised_at = ?)",
+          arrayOf(now, now, sentAt, sentAt)
         )
       } else {
         db.execSQL(
           "UPDATE messages SET delivered_at = CASE WHEN delivered_at = 0 THEN ? ELSE delivered_at END " +
-            "WHERE from_self = 1 AND sent_at = ?",
-          arrayOf(now, sentAt)
+            "WHERE from_self = 1 AND (sent_at = ? OR revised_at = ?)",
+          arrayOf(now, sentAt, sentAt)
         )
       }
     }
@@ -307,11 +356,13 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
     for ((sender, timestamp) in markers) {
       if (timestamp == null) continue
       // Collect the matching rows before updating: their (sender, sentAt) identify any
-      // notifications already posted for them, which are stale now.
+      // notifications already posted for them, which are stale now. The phone may mark
+      // an edited message read by its latest revision's timestamp, hence the revised_at leg.
       val senderClause = if (sender != null) " AND sender_aci = ?" else ""
-      val args = if (sender != null) arrayOf(timestamp.toString(), sender.toString()) else arrayOf(timestamp.toString())
+      val timestampArgs = arrayOf(timestamp.toString(), timestamp.toString())
+      val args = if (sender != null) timestampArgs + sender.toString() else timestampArgs
       db.rawQuery(
-        "SELECT sender_aci, sent_at FROM messages WHERE from_self = 0 AND seen_at = 0 AND sent_at = ?$senderClause",
+        "SELECT sender_aci, sent_at FROM messages WHERE from_self = 0 AND seen_at = 0 AND (sent_at = ? OR revised_at = ?)$senderClause",
         args
       ).use { cursor ->
         while (cursor.moveToNext()) {
@@ -319,7 +370,7 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
         }
       }
       db.execSQL(
-        "UPDATE messages SET seen_at = ? WHERE from_self = 0 AND seen_at = 0 AND sent_at = ?$senderClause",
+        "UPDATE messages SET seen_at = ? WHERE from_self = 0 AND seen_at = 0 AND (sent_at = ? OR revised_at = ?)$senderClause",
         arrayOf(now.toString()) + args
       )
     }
@@ -327,6 +378,45 @@ class EnvelopeProcessor(private val messages: MessagesRepository) {
       AppDeps.notifier.cancelMessages(seen)
       DataChanges.bumpMessages()
     }
+  }
+
+  /**
+   * Applies an edit to the message identified by ([authorAci], [targetSentAt]). If the original
+   * is incoming and unseen, a notification may still be showing the old text — refresh it.
+   */
+  private fun applyEdit(peer: String, authorAci: String, targetSentAt: Long?, newBody: String, newSentAt: Long) {
+    if (targetSentAt == null) return
+    val edited = messages.applyEdit(
+      peer = peer,
+      targetSentAt = targetSentAt,
+      authorAci = authorAci,
+      newBody = newBody,
+      newSentAt = newSentAt
+    )
+    if (edited == null) {
+      Log.i(TAG, "Dropping edit of a message we don't have (ts=$targetSentAt)")
+      return
+    }
+    if (edited.unseen) {
+      AppDeps.notifier.updateMessageBody(
+        senderAci = authorAci,
+        sentAt = edited.sentAt,
+        peer = peer,
+        groupId = edited.groupId,
+        body = newBody,
+        attachmentType = edited.attachmentType
+      ) { aci -> Poller.resolveName(aci) }
+    }
+  }
+
+  /** Tombstones the message ([authorAci], [targetSentAt]) deleted for everyone and retracts its notification. */
+  private fun applyRemoteDelete(peer: String, targetSentAt: Long, authorAci: String) {
+    val deletedSentAt = messages.applyRemoteDelete(peer = peer, targetSentAt = targetSentAt, authorAci = authorAci)
+    if (deletedSentAt == null) {
+      Log.i(TAG, "Dropping delete of a message we don't have (ts=$targetSentAt)")
+      return
+    }
+    AppDeps.notifier.cancelMessages(listOf(SeenMessage(senderAci = authorAci, sentAt = deletedSentAt)))
   }
 
   /** Applies [reacterAci]'s reaction in conversation [peer]; the target message may not exist here. */

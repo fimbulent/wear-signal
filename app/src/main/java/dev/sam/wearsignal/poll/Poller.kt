@@ -69,8 +69,10 @@ object Poller {
 
     if (!silent) {
       // A read sync drained in this same batch may have already marked some of these seen
-      // (read on the phone minutes ago) — notifying for those would be stale noise.
+      // (read on the phone minutes ago) — notifying for those would be stale noise. Likewise
+      // an edit in the same batch replaced the body we collected (a delete marks it seen).
       val unseen = newMessages.filterNot { it.fromSelf || AppDeps.messages.isSeen(it.senderAci, it.sentAt) }
+        .map { it.copy(body = AppDeps.messages.currentBody(it.senderAci, it.sentAt) ?: it.body) }
       AppDeps.notifier.notify(unseen) { aci -> resolveName(aci) }
       AppDeps.notifier.notifyMissedCalls(missedCalls) { aci -> resolveName(aci) }
     }

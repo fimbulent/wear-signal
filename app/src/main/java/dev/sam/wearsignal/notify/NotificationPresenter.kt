@@ -93,36 +93,94 @@ class NotificationPresenter(private val context: Context) {
       return
     }
 
+    val manager = NotificationManagerCompat.from(context)
+
+    messages.filterNot { it.fromSelf }.takeLast(5).forEach { message ->
+      val notificationId = messageNotificationId(message.senderAci, message.sentAt)
+      manager.notify(
+        notificationId,
+        buildMessageNotification(
+          senderAci = message.senderAci,
+          groupId = message.groupId,
+          peer = message.peer,
+          body = message.body,
+          attachmentType = message.attachmentType,
+          sentAt = message.sentAt,
+          nameResolver = nameResolver
+        )
+      )
+    }
+  }
+
+  /**
+   * Refreshes a still-showing message notification after an edit replaced its text.
+   * No-op when the notification was never posted or is already dismissed, so an edit
+   * can't resurrect one.
+   */
+  fun updateMessageBody(
+    senderAci: String,
+    sentAt: Long,
+    peer: String,
+    groupId: String?,
+    body: String,
+    attachmentType: String?,
+    nameResolver: (String) -> String
+  ) {
+    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      return
+    }
+    val notificationId = messageNotificationId(senderAci, sentAt)
+    val active = context.getSystemService(NotificationManager::class.java)
+      .activeNotifications.any { it.id == notificationId }
+    if (!active) return
+    NotificationManagerCompat.from(context).notify(
+      notificationId,
+      buildMessageNotification(
+        senderAci = senderAci,
+        groupId = groupId,
+        peer = peer,
+        body = body,
+        attachmentType = attachmentType,
+        sentAt = sentAt,
+        nameResolver = nameResolver
+      )
+    )
+  }
+
+  private fun buildMessageNotification(
+    senderAci: String,
+    groupId: String?,
+    peer: String,
+    body: String,
+    attachmentType: String?,
+    sentAt: Long,
+    nameResolver: (String) -> String
+  ): android.app.Notification {
     val contentIntent = PendingIntent.getActivity(
       context,
       0,
       Intent(context, MainActivity::class.java),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
-
-    val manager = NotificationManagerCompat.from(context)
-
-    messages.filterNot { it.fromSelf }.takeLast(5).forEachIndexed { index, message ->
-      val sender = nameResolver(message.senderAci)
-      val title = message.groupId
-        ?.let { groupId -> GroupStateResolver.cachedTitle(groupId)?.let { "$sender @ $it" } ?: "$sender (group)" }
-        ?: sender
-      val notificationId = messageNotificationId(message.senderAci, message.sentAt)
-      val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_dialog_email)
-        .setContentTitle(title)
-        .setContentText(message.body.ifEmpty { attachmentPlaceholder(message.attachmentType) })
-        .setWhen(message.sentAt)
-        .setContentIntent(contentIntent)
-        .setAutoCancel(true)
-        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-
+    val sender = nameResolver(senderAci)
+    val title = groupId
+      ?.let { id -> GroupStateResolver.cachedTitle(id)?.let { "$sender @ $it" } ?: "$sender (group)" }
+      ?: sender
+    val notificationId = messageNotificationId(senderAci, sentAt)
+    return NotificationCompat.Builder(context, CHANNEL_ID)
+      .setSmallIcon(android.R.drawable.ic_dialog_email)
+      .setContentTitle(title)
+      .setContentText(body.ifEmpty { attachmentPlaceholder(attachmentType) })
+      .setWhen(sentAt)
+      .setContentIntent(contentIntent)
+      .setAutoCancel(true)
+      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      // A body refresh after an edit must not buzz the wrist a second time.
+      .setOnlyAlertOnce(true)
       // Wear's native reply (voice/keyboard/canned) via RemoteInput; groups fan out on send.
-      builder.addAction(buildReplyAction(message.peer, message.groupId != null, notificationId))
-
-      manager.notify(notificationId, builder.build())
-    }
+      .addAction(buildReplyAction(peer, groupId != null, notificationId))
+      .build()
   }
 
   /** Retracts message notifications once they're read (thread opened here, or synced from the phone). */

@@ -3,6 +3,7 @@ package dev.sam.wearsignal.messages
 import android.content.ContentValues
 import dev.sam.wearsignal.calls.CallLog
 import dev.sam.wearsignal.db.WatchDatabase
+import java.io.File
 
 /** One conversation in the conversation list, keyed by [peer] (group id or 1:1 ACI). */
 data class ConversationRow(
@@ -30,12 +31,27 @@ data class MessageRow(
   val attachmentPath: String? = null,
   /** Emoji reactions to this message, grouped per emoji, most-used first. */
   val reactions: List<MessageReaction> = emptyList(),
+  /** Sent timestamp of the latest edit revision (0 = never edited). New edits and reactions target it. */
+  val revisedAt: Long = 0,
+  /** The author deleted this message for everyone; shown as a tombstone. */
+  val remoteDeleted: Boolean = false,
   /** Set when this row is a call event rather than a message. */
   val call: CallInfo? = null
 ) {
   /** The emoji we reacted with, if any (one reaction per person, like Signal). */
   val myReaction: String? get() = reactions.firstOrNull { it.mine }?.emoji
+
+  val edited: Boolean get() = revisedAt > 0
 }
+
+/** The resolved target of an applied edit: the row's original identity plus what a notification refresh needs. */
+data class EditedMessage(
+  val sentAt: Long,
+  val groupId: String?,
+  val attachmentType: String?,
+  /** Incoming and still unseen: a watch notification may be showing the old text. */
+  val unseen: Boolean
+)
 
 /** One emoji's reactions to a message: how many people, and whether we're one of them. */
 data class MessageReaction(val emoji: String, val count: Int, val mine: Boolean)
@@ -127,6 +143,8 @@ class MessagesRepository(private val db: WatchDatabase) {
   /**
    * Applies one person's reaction to a message. A new reaction replaces their previous one;
    * [remove] retracts it. Returns false for reactions to messages we don't have (dropped).
+   * [targetSentAt] may reference any revision of an edited message; reaction rows are
+   * keyed by the original sent timestamp so the whole edit chain shares them.
    */
   fun applyReaction(
     peer: String,
@@ -136,24 +154,21 @@ class MessagesRepository(private val db: WatchDatabase) {
     emoji: String,
     remove: Boolean
   ): Boolean {
+    val resolvedSentAt = resolveTargetSentAt(peer, targetSentAt, targetAuthorAci)
     if (remove) {
       val removed = db.writableDatabase.delete(
         "reactions",
         "target_sent_at = ? AND target_author_aci = ? AND reacter_aci = ?",
-        arrayOf(targetSentAt.toString(), targetAuthorAci, reacterAci)
+        arrayOf((resolvedSentAt ?: targetSentAt).toString(), targetAuthorAci, reacterAci)
       ) > 0
       if (removed) DataChanges.bumpMessages()
       return removed
     }
-    val targetExists = db.readableDatabase.rawQuery(
-      "SELECT 1 FROM messages WHERE peer = ? AND sent_at = ? AND sender_aci = ? LIMIT 1",
-      arrayOf(peer, targetSentAt.toString(), targetAuthorAci)
-    ).use { it.moveToFirst() }
-    if (!targetExists) return false
+    if (resolvedSentAt == null) return false
 
     val values = ContentValues().apply {
       put("peer", peer)
-      put("target_sent_at", targetSentAt)
+      put("target_sent_at", resolvedSentAt)
       put("target_author_aci", targetAuthorAci)
       put("reacter_aci", reacterAci)
       put("emoji", emoji)
@@ -164,6 +179,87 @@ class MessagesRepository(private val db: WatchDatabase) {
     return true
   }
 
+  /** Resolves a referenced sent timestamp (original or any edit revision) to the row's original one. */
+  private fun resolveTargetSentAt(peer: String, targetSentAt: Long, authorAci: String): Long? =
+    db.readableDatabase.rawQuery(
+      "SELECT sent_at FROM messages WHERE peer = ? AND sender_aci = ? AND (sent_at = ? OR revised_at = ?) AND remote_deleted = 0 LIMIT 1",
+      arrayOf(peer, authorAci, targetSentAt.toString(), targetSentAt.toString())
+    ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+  /**
+   * Replaces the target message's body with an edit's. Only rows authored by [authorAci] match,
+   * so no one can edit someone else's message; the row keeps its original sent_at (and thus its
+   * position and notification identity) while revised_at records the new revision's timestamp,
+   * which the next chained edit will target. Returns null for targets we don't have.
+   */
+  fun applyEdit(
+    peer: String,
+    targetSentAt: Long,
+    authorAci: String,
+    newBody: String,
+    newSentAt: Long
+  ): EditedMessage? {
+    val row = db.readableDatabase.rawQuery(
+      "SELECT sent_at, group_id, attachment_type, from_self, seen_at FROM messages " +
+        "WHERE peer = ? AND sender_aci = ? AND (sent_at = ? OR revised_at = ?) AND remote_deleted = 0 LIMIT 1",
+      arrayOf(peer, authorAci, targetSentAt.toString(), targetSentAt.toString())
+    ).use { cursor ->
+      if (!cursor.moveToFirst()) return null
+      EditedMessage(
+        sentAt = cursor.getLong(0),
+        groupId = if (cursor.isNull(1)) null else cursor.getString(1),
+        attachmentType = if (cursor.isNull(2)) null else cursor.getString(2),
+        unseen = cursor.getInt(3) == 0 && cursor.getLong(4) == 0L
+      )
+    }
+    db.writableDatabase.execSQL(
+      "UPDATE messages SET body = ?, revised_at = ? WHERE peer = ? AND sender_aci = ? AND sent_at = ?",
+      arrayOf(newBody, newSentAt.toString(), peer, authorAci, row.sentAt.toString())
+    )
+    DataChanges.bumpMessages()
+    return row
+  }
+
+  /**
+   * Applies a delete-for-everyone: the row stays as a tombstone (like Signal's "message
+   * deleted" placeholder) with its content, attachment, and reactions cleared. Marks the
+   * row seen so a message the user never read doesn't keep the unread count up. Returns
+   * the row's original sent timestamp (identifying its notification), or null if unknown.
+   */
+  fun applyRemoteDelete(peer: String, targetSentAt: Long, authorAci: String): Long? {
+    val row = db.readableDatabase.rawQuery(
+      "SELECT sent_at, attachment_path FROM messages " +
+        "WHERE peer = ? AND sender_aci = ? AND (sent_at = ? OR revised_at = ?) AND remote_deleted = 0 LIMIT 1",
+      arrayOf(peer, authorAci, targetSentAt.toString(), targetSentAt.toString())
+    ).use { cursor ->
+      if (!cursor.moveToFirst()) return null
+      cursor.getLong(0) to (if (cursor.isNull(1)) null else cursor.getString(1))
+    }
+    val (sentAt, attachmentPath) = row
+    attachmentPath?.let { File(it).delete() }
+    val now = System.currentTimeMillis()
+    db.writableDatabase.execSQL(
+      "UPDATE messages SET body = '', attachment_type = NULL, attachment_pointer = NULL, attachment_path = NULL, " +
+        "revised_at = 0, remote_deleted = ?, seen_at = CASE WHEN seen_at = 0 THEN ? ELSE seen_at END " +
+        "WHERE peer = ? AND sender_aci = ? AND sent_at = ?",
+      arrayOf(now.toString(), now.toString(), peer, authorAci, sentAt.toString())
+    )
+    db.writableDatabase.delete(
+      "reactions",
+      "peer = ? AND target_sent_at = ? AND target_author_aci = ?",
+      arrayOf(peer, sentAt.toString(), authorAci)
+    )
+    DataChanges.bumpMessages()
+    return sentAt
+  }
+
+  /** The stored body for a message, or null if we don't have it (an edit drained in the same batch may have replaced it). */
+  fun currentBody(senderAci: String, sentAt: Long): String? =
+    db.readableDatabase.rawQuery(
+      "SELECT body FROM messages WHERE sender_aci = ? AND sent_at = ? LIMIT 1",
+      arrayOf(senderAci, sentAt.toString())
+    ).use { if (it.moveToFirst()) it.getString(0) else null }
+
   /**
    * The [limit] most recently active conversations, with group titles / contact names
    * resolved where known. Ask for one more than you show to learn whether more exist.
@@ -173,7 +269,7 @@ class MessagesRepository(private val db: WatchDatabase) {
     db.readableDatabase.rawQuery(
       """
       SELECT m.peer, m.group_id IS NOT NULL, m.body, MAX(m.sent_at) AS last_at, m.from_self,
-             g.title, c.name, sc.name, m.sender_aci, m.attachment_type
+             g.title, c.name, sc.name, m.sender_aci, m.attachment_type, m.remote_deleted
       FROM messages m
       LEFT JOIN groups g ON g.group_id = m.peer
       LEFT JOIN contacts c ON c.aci = m.peer
@@ -193,6 +289,7 @@ class MessagesRepository(private val db: WatchDatabase) {
         val senderName = if (cursor.isNull(7)) null else cursor.getString(7)
         val senderAci = cursor.getString(8)
         val attachmentType = if (cursor.isNull(9)) null else cursor.getString(9)
+        val remoteDeleted = cursor.getLong(10) > 0
         val body = cursor.getString(2)
         result += ConversationRow(
           peer = peer,
@@ -201,7 +298,11 @@ class MessagesRepository(private val db: WatchDatabase) {
             else -> contactName ?: peer.take(8)
           },
           isGroup = isGroup,
-          lastBody = body.ifEmpty { if (attachmentType != null) attachmentPlaceholder(attachmentType) else body },
+          lastBody = when {
+            remoteDeleted -> "Message deleted"
+            body.isEmpty() && attachmentType != null -> attachmentPlaceholder(attachmentType)
+            else -> body
+          },
           lastAt = cursor.getLong(3),
           lastFromSelf = fromSelf,
           lastSender = if (fromSelf) "Me" else senderName ?: senderAci.take(8)
@@ -351,7 +452,7 @@ class MessagesRepository(private val db: WatchDatabase) {
     db.readableDatabase.rawQuery(
       """
       SELECT m.sender_aci, m.body, m.sent_at, m.from_self, c.name, m.delivered_at, m.read_at,
-             m.attachment_type, m.attachment_path
+             m.attachment_type, m.attachment_path, m.revised_at, m.remote_deleted
       FROM messages m LEFT JOIN contacts c ON c.aci = m.sender_aci
       WHERE m.peer = ?
       ORDER BY m.sent_at ASC
@@ -377,7 +478,9 @@ class MessagesRepository(private val db: WatchDatabase) {
           read = cursor.getLong(6) > 0,
           attachmentType = if (cursor.isNull(7)) null else cursor.getString(7),
           attachmentPath = if (cursor.isNull(8)) null else cursor.getString(8),
-          reactions = reactionsByTarget[sentAt to senderAci] ?: emptyList()
+          reactions = reactionsByTarget[sentAt to senderAci] ?: emptyList(),
+          revisedAt = cursor.getLong(9),
+          remoteDeleted = cursor.getLong(10) > 0
         )
       }
     }

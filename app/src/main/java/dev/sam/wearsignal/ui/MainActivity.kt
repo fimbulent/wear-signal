@@ -170,7 +170,8 @@ fun WearSignalNavHost() {
               peer = conversation.peer,
               isGroup = conversation.isGroup,
               targetAuthorAci = message.senderAci,
-              targetSentAt = message.sentAt,
+              // Other clients resolve reactions against an edited message's latest revision.
+              targetSentAt = if (message.edited) message.revisedAt else message.sentAt,
               emoji = emoji,
               remove = remove
             )

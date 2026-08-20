@@ -8,7 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * Single SQLite database holding the Signal protocol stores (per account identity: "aci"/"pni"),
  * received messages, and the contact-name cache.
  */
-class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db", null, 9) {
+class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db", null, 10) {
 
   override fun onCreate(db: SQLiteDatabase) {
     createDirectoryTable(db)
@@ -110,7 +110,9 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
         attachment_type TEXT,
         attachment_pointer BLOB,
         attachment_path TEXT,
-        seen_at INTEGER NOT NULL DEFAULT 0
+        seen_at INTEGER NOT NULL DEFAULT 0,
+        revised_at INTEGER NOT NULL DEFAULT 0,
+        remote_deleted INTEGER NOT NULL DEFAULT 0
       )
       """
     )
@@ -178,6 +180,13 @@ class WatchDatabase(context: Context) : SQLiteOpenHelper(context, "wearsignal.db
         db.execSQL("ALTER TABLE groups ADD COLUMN active_era TEXT")
         db.execSQL("ALTER TABLE groups ADD COLUMN active_era_at INTEGER NOT NULL DEFAULT 0")
       }
+    }
+    if (oldVersion < 10) {
+      // Edits and delete-for-everyone mutate messages in place: revised_at is the sent
+      // timestamp of the latest accepted edit (edits chain by targeting the previous
+      // revision), remote_deleted tombstones a message the author deleted for everyone.
+      db.execSQL("ALTER TABLE messages ADD COLUMN revised_at INTEGER NOT NULL DEFAULT 0")
+      db.execSQL("ALTER TABLE messages ADD COLUMN remote_deleted INTEGER NOT NULL DEFAULT 0")
     }
   }
 
