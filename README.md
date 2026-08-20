@@ -1,5 +1,10 @@
 # wear-signal
 
+> This is a fork of [Samba89/wear-signal](https://github.com/Samba89/wear-signal).
+> It carries additional features on top of the original: emoji reactions, read-state
+> sync, audio calls and call history via RingRTC, a recents tile and unread-count
+> complication, PNI/ACI conversation merging, and live-updating screens.
+
 A vibe-coded Signal app I made for WearOS, so I can send a message to somebody without a phone. Tested on a Pixel Watch 4.
 
 A compact Signal client for Wear OS. It links to your existing Signal account as a
