@@ -2,7 +2,7 @@
  * Copyright 2024 Signal Messenger, LLC
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Vendored from Signal-Android v8.15.0; build file trimmed for standalone use.
+ * Vendored from Signal-Android v8.24.1; build file trimmed for standalone use.
  */
 
 import org.gradle.api.tasks.SourceSetContainer

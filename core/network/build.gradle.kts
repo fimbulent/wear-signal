@@ -2,7 +2,7 @@
  * Copyright 2026 Signal Messenger, LLC
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Vendored from Signal-Android v8.15.0; build file trimmed for standalone use.
+ * Vendored from Signal-Android v8.24.1; build file trimmed for standalone use.
  */
 
 import org.gradle.api.tasks.SourceSetContainer
@@ -50,6 +50,7 @@ dependencies {
   api(libs.jackson.module.kotlin)
   api(libs.rxjava3.rxjava)
   api(libs.square.okio)
+  api(libs.square.okhttp3)
 
   implementation(libs.google.jsr305)
   implementation(libs.kotlinx.coroutines.core)

@@ -19,18 +19,18 @@ import org.whispersystems.signalservice.api.message.MessageApi
 import org.whispersystems.signalservice.api.profiles.ProfileApi
 import org.signal.core.models.ServiceId.ACI
 import org.signal.core.models.ServiceId.PNI
-import org.whispersystems.signalservice.api.push.TrustStore
+import org.signal.network.config.TrustStore
 import org.whispersystems.signalservice.api.registration.RegistrationApi
 import org.whispersystems.signalservice.api.util.CredentialsProvider
 import org.whispersystems.signalservice.api.websocket.HealthMonitor
 import org.whispersystems.signalservice.api.websocket.SignalWebSocket
 import org.whispersystems.signalservice.api.websocket.WebSocketFactory
-import org.whispersystems.signalservice.internal.configuration.SignalCdnUrl
-import org.whispersystems.signalservice.internal.configuration.SignalCdsiUrl
-import org.whispersystems.signalservice.internal.configuration.SignalServiceConfiguration
-import org.whispersystems.signalservice.internal.configuration.SignalServiceUrl
-import org.whispersystems.signalservice.internal.configuration.SignalStorageUrl
-import org.whispersystems.signalservice.internal.configuration.SignalSvr2Url
+import org.signal.network.config.SignalCdnUrl
+import org.signal.network.config.SignalCdsiUrl
+import org.signal.network.config.SignalServiceConfiguration
+import org.signal.network.config.SignalServiceUrl
+import org.signal.network.config.SignalStorageUrl
+import org.signal.network.config.SignalSvr2Url
 import org.whispersystems.signalservice.internal.push.PushServiceSocket
 import org.whispersystems.signalservice.internal.util.StaticCredentialsProvider
 import org.whispersystems.signalservice.internal.websocket.LibSignalChatConnection
@@ -93,6 +93,7 @@ class SignalNet(context: Context, private val account: AccountStore) {
     override fun onKeepAliveResponse(sentTimestamp: Long, isIdentifiedWebSocket: Boolean) = Unit
     override fun onMessageError(status: Int, isIdentifiedWebSocket: Boolean) = Unit
     override fun onReceivedAlerts(alerts: Array<out String>, isIdentifiedWebSocket: Boolean) = Unit
+    override fun onServerTimestamp(serverTimestamp: Long, isIdentifiedWebSocket: Boolean) = Unit
   }
 
   val authWebSocket: SignalWebSocket.AuthenticatedWebSocket by lazy {
@@ -142,6 +143,7 @@ class SignalNet(context: Context, private val account: AccountStore) {
       keysApi,
       WatchDataStore.aci(),
       selfAddress,
+      SessionLock,
       PreKeyRepository.BatchHelper { it.run() }
     )
 

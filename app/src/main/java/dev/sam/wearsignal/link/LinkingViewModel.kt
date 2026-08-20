@@ -77,7 +77,9 @@ class LinkingViewModel : ViewModel() {
 
   private fun startSocket(): Closeable {
     return ProvisioningSocket.start<ProvisionMessage>(
-      mode = ProvisioningSocket.Mode.LINK,
+      // linkAndSyncCapable keeps the backup5 capability the old Mode.LINK always sent,
+      // so "Transfer messages" on the primary still offers the message-history archive.
+      mode = ProvisioningSocket.Mode.Link(linkAndSyncCapable = true),
       identityKeyPair = IdentityKeyPair.generate(),
       configuration = AppDeps.net.configuration,
       handler = { id, t ->

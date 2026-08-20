@@ -2,6 +2,7 @@ package dev.sam.wearsignal.messages
 
 import dev.sam.wearsignal.AppDeps
 import org.signal.core.util.logging.Log
+import org.whispersystems.signalservice.api.messages.EnvelopeResponse
 import org.whispersystems.signalservice.api.websocket.WebSocketConnectionState
 
 /**
@@ -32,10 +33,12 @@ class MessageRetriever(private val processor: EnvelopeProcessor) {
         hasMore = try {
           webSocket.readMessageBatch(READ_TIMEOUT_MS, BATCH_SIZE) { batch ->
             for (response in batch) {
-              val message = processor.process(response.envelope, response.serverDeliveredTimestamp)
-              if (message != null) {
-                processor.store(message)
-                collected += message
+              if (response is EnvelopeResponse.Parsed) {
+                val message = processor.process(response.envelope, response.serverDeliveredTimestamp)
+                if (message != null) {
+                  processor.store(message)
+                  collected += message
+                }
               }
               webSocket.sendAck(response)
             }

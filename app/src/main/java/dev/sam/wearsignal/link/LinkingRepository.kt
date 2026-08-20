@@ -11,8 +11,8 @@ import org.signal.libsignal.protocol.ecc.ECPrivateKey
 import org.signal.libsignal.zkgroup.profiles.ProfileKey
 import org.signal.network.NetworkResult
 import org.whispersystems.signalservice.api.account.AccountAttributes
+import org.whispersystems.signalservice.api.account.DeviceAttributes
 import org.whispersystems.signalservice.api.account.PreKeyUpload
-import org.whispersystems.signalservice.api.crypto.UnidentifiedAccess
 import org.signal.core.models.ServiceId.ACI
 import org.signal.core.models.ServiceId.PNI
 import org.whispersystems.signalservice.api.push.ServiceIdType
@@ -63,13 +63,11 @@ object LinkingRepository {
 
     val encryptedDeviceName = DeviceNameCipher.encryptDeviceName(DEVICE_NAME.toByteArray(Charsets.UTF_8), aciIdentityKeyPair)
 
-    val accountAttributes = AccountAttributes(
-      signalingKey = null,
-      registrationId = aciRegistrationId,
+    val deviceAttributes = DeviceAttributes(
       fetchesMessages = true, // no FCM; we poll via websocket
-      registrationLock = null,
-      unidentifiedAccessKey = UnidentifiedAccess.deriveAccessKeyFrom(profileKey),
-      unrestrictedUnidentifiedAccess = false,
+      registrationId = aciRegistrationId,
+      pniRegistrationId = pniRegistrationId,
+      name = Base64.encodeWithPadding(encryptedDeviceName),
       // Declare everything the primary declares (AppCapabilities in Signal-Android):
       // the server 409s a device link that would downgrade any account capability.
       // We don't use storage service and ignore username-change syncs; claiming
@@ -79,12 +77,9 @@ object LinkingRepository {
         versionedExpirationTimer = true,
         attachmentBackfill = true,
         spqr = true,
-        usernameChangeSyncMessage = true
-      ),
-      discoverableByPhoneNumber = false,
-      name = Base64.encodeWithPadding(encryptedDeviceName),
-      pniRegistrationId = pniRegistrationId,
-      recoveryPassword = null
+        usernameChangeSyncMessage = true,
+        optionalPhoneNumber = false
+      )
     )
 
     val aciPreKeys = PreKeys.generateSignedAndLastResortPreKeys(aciIdentityKeyPair)
@@ -92,7 +87,7 @@ object LinkingRepository {
 
     Log.i(TAG, "Registering as secondary device...")
     val result = AppDeps.net.unauthenticatedRegistrationApi(e164, password)
-      .registerAsSecondaryDevice(provisioningCode, accountAttributes, aciPreKeys, pniPreKeys, null)
+      .registerAsSecondaryDevice(provisioningCode, deviceAttributes, aciPreKeys, pniPreKeys, null)
 
     when (result) {
       is NetworkResult.Success -> {

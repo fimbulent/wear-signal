@@ -2,7 +2,7 @@
  * Copyright 2023 Signal Messenger, LLC
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Vendored from Signal-Android v8.15.0; build file trimmed for standalone use.
+ * Vendored from Signal-Android v8.24.1; build file trimmed for standalone use.
  */
 
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -11,6 +11,17 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
   id("java-library")
   id("org.jetbrains.kotlin.jvm")
+  id("com.squareup.wire")
+}
+
+wire {
+  kotlin {
+    javaInterop = true
+  }
+
+  sourcePath {
+    srcDir("src/main/protowire")
+  }
 }
 
 java {
@@ -26,7 +37,6 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
-  // wire-runtime + okio came in via the wire plugin upstream; this module only uses runtime types
   api(libs.square.wire.runtime)
   api(libs.square.okio)
 

@@ -18,5 +18,7 @@ object WatchDataStore : SignalServiceDataStore {
 
   override fun pni(): SignalServiceAccountDataStore = AppDeps.pniProtocolStore
 
+  override fun pniOrNull(): SignalServiceAccountDataStore? = AppDeps.pniProtocolStore
+
   override fun isMultiDevice(): Boolean = true
 }

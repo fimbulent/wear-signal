@@ -168,8 +168,7 @@ class WatchProtocolStore(
     ).use { cursor ->
       while (cursor.moveToNext()) {
         val record = SessionRecord(cursor.getBlob(2))
-        // 0.0 = never treat a session as invalid for lacking PQ state (Signal's remote-config default)
-        if (record.hasSenderChain(0.0)) {
+        if (record.hasSenderChain()) {
           result[SignalProtocolAddress(cursor.getString(0), cursor.getInt(1))] = record
         }
       }
@@ -189,7 +188,7 @@ class WatchProtocolStore(
 
   override fun containsSession(address: SignalProtocolAddress): Boolean {
     val record = getSession(address) ?: return false
-    return record.hasSenderChain(0.0)
+    return record.hasSenderChain()
   }
 
   override fun deleteSession(address: SignalProtocolAddress) {
@@ -389,4 +388,7 @@ class WatchProtocolStore(
   override fun clearSenderKeySharedWith(addresses: Collection<SignalProtocolAddress>) = Unit
 
   override fun isMultiDevice(): Boolean = true
+
+  // The watch is itself a linked device; the primary always exists, so this never changes.
+  override fun setMultiDevice(isMultiDevice: Boolean) = Unit
 }

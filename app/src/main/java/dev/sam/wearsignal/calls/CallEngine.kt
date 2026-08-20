@@ -365,6 +365,8 @@ object CallEngine : CallManager.Observer {
           AppDeps.context,
           eglBase,
           org.signal.ringrtc.AudioConfig(),
+          // Defaults leave VP9 off: costly to decode on a watch, and never displayed
+          org.signal.ringrtc.VideoConfig(),
           dropFramesSink,
           dropFramesSink,
           darkCamera,
@@ -375,8 +377,8 @@ object CallEngine : CallManager.Observer {
           CallManager.DataMode.LOW,
           null, // no audio level callbacks
           null, // default DRED duration
-          false, // no software VP9: costly to decode on a watch, and never displayed
-          false // never enable the camera we don't have
+          false, // never enable the camera we don't have
+          null // no periodic stats logging
         )
       } catch (t: Throwable) {
         Log.w(TAG, "proceed() failed", t)

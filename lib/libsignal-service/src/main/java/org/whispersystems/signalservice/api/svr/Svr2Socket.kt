@@ -11,11 +11,11 @@ import org.signal.core.util.logging.Log
 import org.signal.libsignal.attest.AttestationDataException
 import org.signal.libsignal.sgxsession.SgxCommunicationFailureException
 import org.signal.libsignal.svr2.Svr2Client
+import org.signal.network.config.SignalServiceConfiguration
+import org.signal.network.config.SignalSvr2Url
 import org.signal.network.exceptions.NonSuccessfulResponseCodeException
 import org.whispersystems.signalservice.api.buildOkHttpClient
 import org.whispersystems.signalservice.api.chooseUrl
-import org.whispersystems.signalservice.internal.configuration.SignalServiceConfiguration
-import org.whispersystems.signalservice.internal.configuration.SignalSvr2Url
 import org.whispersystems.signalservice.internal.push.AuthCredentials
 import java.io.IOException
 import java.time.Instant
@@ -151,6 +151,8 @@ internal class Svr2Socket(
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: OkHttpResponse?) {
       val exception = if (t.message?.contains("404") == true) {
         NonSuccessfulResponseCodeException(404)
+      } else if (t.message?.contains("429") == true) {
+        NonSuccessfulResponseCodeException(429)
       } else {
         IOException(t)
       }

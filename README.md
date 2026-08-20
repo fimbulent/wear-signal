@@ -10,7 +10,7 @@ A compact Signal client for Wear OS. It links to your existing Signal account as
 conversations — and optionally show notifications — while your phone stays at home.
 
 Built against vendored modules from [Signal-Android](https://github.com/signalapp/Signal-Android)
-v8.15.0 (`lib/libsignal-service`, `core/network`, `core/util-jvm`, `core/models-jvm`).
+v8.24.1 (`lib/libsignal-service`, `core/network`, `core/util-jvm`, `core/models-jvm`).
 AGPL-3.0-only, personal use.
 
 ## What it does
