@@ -27,6 +27,8 @@ class NotificationPresenter(private val context: Context) {
     private val TAG = Log.tag(NotificationPresenter::class)
     private const val CHANNEL_ID = "messages"
     private const val CALLS_CHANNEL_ID = "calls"
+    private const val STATUS_CHANNEL_ID = "status"
+    private val UNLINKED_NOTIFICATION_ID = "status:unlinked".hashCode()
     const val KEY_REPLY_TEXT = "reply_text"
     const val EXTRA_PEER = "peer"
     const val EXTRA_IS_GROUP = "is_group"
@@ -45,10 +47,43 @@ class NotificationPresenter(private val context: Context) {
       enableVibration(true)
       description = "Signal calls missed while away from phone"
     }
+    val statusChannel = NotificationChannel(STATUS_CHANNEL_ID, "Account status", NotificationManager.IMPORTANCE_HIGH).apply {
+      description = "Problems with the link to your Signal account"
+    }
     context.getSystemService(NotificationManager::class.java).let {
       it.createNotificationChannel(channel)
       it.createNotificationChannel(callsChannel)
+      it.createNotificationChannel(statusChannel)
     }
+  }
+
+  /** Posted once when the server rejects our credentials: the account unlinked this watch. */
+  fun notifyUnlinked() {
+    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      Log.w(TAG, "Notification permission not granted")
+      return
+    }
+    val contentIntent = PendingIntent.getActivity(
+      context,
+      0,
+      Intent(context, MainActivity::class.java),
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val notification = NotificationCompat.Builder(context, STATUS_CHANNEL_ID)
+      .setSmallIcon(android.R.drawable.stat_sys_warning)
+      .setContentTitle("Watch unlinked")
+      .setContentText("This watch is no longer linked to your Signal account. Open the app to re-link.")
+      .setStyle(NotificationCompat.BigTextStyle().bigText("This watch is no longer linked to your Signal account. Open the app to re-link."))
+      .setContentIntent(contentIntent)
+      .setAutoCancel(true)
+      .setCategory(NotificationCompat.CATEGORY_ERROR)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .build()
+    NotificationManagerCompat.from(context).notify(UNLINKED_NOTIFICATION_ID, notification)
+  }
+
+  fun cancelUnlinked() {
+    NotificationManagerCompat.from(context).cancel(UNLINKED_NOTIFICATION_ID)
   }
 
   /** Missed-call notifications, mirroring message semantics (only when the phone isn't covering us). */

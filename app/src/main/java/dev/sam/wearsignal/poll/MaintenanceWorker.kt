@@ -37,6 +37,10 @@ class MaintenanceWorker(context: Context, params: WorkerParameters) : CoroutineW
 
   override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
     if (!AppDeps.account.isLinked) return@withContext Result.success()
+    if (AppDeps.account.isDeregistered) {
+      Log.w(TAG, "Deregistered; skipping maintenance until re-linked")
+      return@withContext Result.success()
+    }
 
     try {
       Log.i(TAG, "Running charge-time maintenance: silent drain + prekey upkeep")

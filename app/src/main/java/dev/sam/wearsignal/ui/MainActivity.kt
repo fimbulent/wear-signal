@@ -64,6 +64,9 @@ fun WearSignalNavHost() {
   var polling by remember { mutableStateOf(false) }
   var pollCount by remember { mutableIntStateOf(0) } // bumped after each poll so screens reload
   var pollStatus by remember { mutableStateOf<String?>(null) } // error text when the last poll failed
+  // The server rejected our credentials (persisted, so it survives app restarts): the
+  // account unlinked this watch and the conversation list offers re-linking.
+  var unlinked by remember { mutableStateOf(AppDeps.account.isDeregistered) }
   // Reloads screens when message data changes underneath them — e.g. a background poll
   // stores a message while a thread is open, or while the app sits resumed in the recents.
   val dataVersion by DataChanges.messagesVersion.collectAsState()
@@ -92,6 +95,7 @@ fun WearSignalNavHost() {
         is Poller.Result.Failure -> result.message
         is Poller.Result.Success -> null
       }
+      unlinked = AppDeps.account.isDeregistered
     }
   }
 
@@ -100,10 +104,14 @@ fun WearSignalNavHost() {
       val viewModel: LinkingViewModel = viewModel()
       val context = androidx.compose.ui.platform.LocalContext.current
       PairingScreen(viewModel = viewModel) {
+        unlinked = false
+        pollStatus = null
         PollScheduler.scheduleNext(context)
         MaintenanceWorker.ensureScheduled(context)
+        // Clear the whole stack: after a first link it replaces "pairing", after a
+        // re-link it also drops the stale "conversations" entry underneath.
         navController.navigate("conversations") {
-          popUpTo("pairing") { inclusive = true }
+          popUpTo(0) { inclusive = true }
         }
       }
     }
@@ -122,8 +130,10 @@ fun WearSignalNavHost() {
         hasMore = conversations.size > limit,
         polling = polling,
         pollStatus = pollStatus,
+        unlinked = unlinked,
         activeCalls = activeGroupCalls,
         onPoll = { pollNow() },
+        onRelink = { navController.navigate("pairing") },
         onLoadMore = { limit += 10 },
         onOpen = { conversation ->
           openConversation = conversation

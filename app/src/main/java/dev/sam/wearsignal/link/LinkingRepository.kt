@@ -94,6 +94,18 @@ object LinkingRepository {
         val deviceId = result.result.deviceId.toInt()
         Log.i(TAG, "Linked! deviceId=$deviceId")
 
+        // Relinking after a previous link died: every session, sender key, and prekey minted
+        // under the old link is dead — the server only knows the keys uploaded with this
+        // registration, and old sessions reference the previous identity/registration ids.
+        // Purge them so peers establish fresh sessions against the new prekeys. Messages,
+        // contacts, and groups survive (like Signal Desktop's relink); peer identities stay
+        // too — they belong to the peers, not to our link. No-op on a first link.
+        AppDeps.database.writableDatabase.let { db ->
+          for (table in listOf("sessions", "sender_keys", "one_time_prekeys", "signed_prekeys", "kyber_prekeys", "used_kyber_tuples")) {
+            db.execSQL("DELETE FROM $table")
+          }
+        }
+
         account.apply {
           this.aci = aci
           this.pni = pni
@@ -105,7 +117,9 @@ object LinkingRepository {
           this.profileKey = profileKey
           this.aciRegistrationId = aciRegistrationId
           this.pniRegistrationId = pniRegistrationId
+          this.isDeregistered = false
         }
+        AppDeps.notifier.cancelUnlinked()
 
         AppDeps.aciProtocolStore.storeSignedPreKey(aciPreKeys.signedPreKey.id, aciPreKeys.signedPreKey)
         AppDeps.aciProtocolStore.storeLastResortKyberPreKey(aciPreKeys.lastResortKyberPreKey.id, aciPreKeys.lastResortKyberPreKey)

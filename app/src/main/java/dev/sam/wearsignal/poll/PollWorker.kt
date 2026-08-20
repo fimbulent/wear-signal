@@ -24,6 +24,13 @@ class PollWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     try {
       if (!AppDeps.account.isLinked) return@withContext Result.success()
 
+      if (AppDeps.account.isDeregistered) {
+        // The account unlinked this watch; connecting would just 403 again. The alarm chain
+        // stays armed (scheduleNext below) so polling resumes by itself after a re-link.
+        Log.w(TAG, "Deregistered; skipping poll until re-linked")
+        return@withContext Result.success()
+      }
+
       if (PhoneConnectionMonitor.isPhoneConnected(applicationContext)) {
         Log.i(TAG, "Phone connected; skipping poll")
       } else {

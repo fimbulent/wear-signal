@@ -36,7 +36,7 @@ class TilePollWorker(context: Context, params: WorkerParameters) : CoroutineWork
   override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
     try {
       val sinceLastPoll = System.currentTimeMillis() - AppDeps.account.lastPollAt
-      if (AppDeps.account.isLinked && sinceLastPoll > MIN_INTERVAL_MS) {
+      if (AppDeps.account.isLinked && !AppDeps.account.isDeregistered && sinceLastPoll > MIN_INTERVAL_MS) {
         Poller.poll(silent = true)
       }
     } catch (t: Throwable) {

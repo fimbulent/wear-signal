@@ -59,6 +59,16 @@ class AccountStore(context: Context) {
     get() = prefs.getInt("pni_registration_id", 0)
     set(value) = prefs.edit { putInt("pni_registration_id", value) }
 
+  /**
+   * Set when the server rejects our credentials (403 on connect): the account removed this
+   * watch — e.g. Signal was reinstalled on a new phone, which unlinks every device. Polling
+   * is pointless until the user re-links. Cleared by a successful drain (the rejection was
+   * transient) or by completing a new link.
+   */
+  var isDeregistered: Boolean
+    get() = prefs.getBoolean("deregistered", false)
+    set(value) = prefs.edit { putBoolean("deregistered", value) }
+
   var lastPollAt: Long
     get() = prefs.getLong("last_poll_at", 0L)
     set(value) = prefs.edit { putLong("last_poll_at", value) }

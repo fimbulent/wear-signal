@@ -30,24 +30,49 @@ fun ConversationsScreen(
   hasMore: Boolean,
   polling: Boolean,
   pollStatus: String?,
+  unlinked: Boolean = false,
   activeCalls: Map<String, Int> = emptyMap(),
   onPoll: () -> Unit,
+  onRelink: () -> Unit = {},
   onLoadMore: () -> Unit,
   onOpen: (ConversationRow) -> Unit,
   onNewMessage: () -> Unit,
   onOpenSettings: () -> Unit
 ) {
   ScalingLazyColumn {
+    if (unlinked) {
+      // The account no longer knows this watch (e.g. Signal moved to a new phone).
+      // Conversations stay readable below; polling and sending are dead until re-linked.
+      item {
+        Text(
+          text = "⚠ No longer linked to your Signal account",
+          style = MaterialTheme.typography.caption2,
+          color = Color(0xFFFFAB91),
+          textAlign = TextAlign.Center,
+          modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+        )
+      }
+      item {
+        Chip(
+          label = { Text("Re-link") },
+          onClick = onRelink,
+          colors = ChipDefaults.primaryChipColors(),
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    }
+
     item {
       Chip(
         label = { Text(if (polling) "Checking…" else "Check for messages") },
         onClick = onPoll,
-        colors = ChipDefaults.primaryChipColors(),
+        colors = if (unlinked) ChipDefaults.secondaryChipColors() else ChipDefaults.primaryChipColors(),
         modifier = Modifier.fillMaxWidth()
       )
     }
 
-    if (pollStatus != null && !polling) {
+    // The unlinked banner above already explains a "No longer linked" failure.
+    if (pollStatus != null && !polling && !unlinked) {
       item {
         Text(
           text = "⚠ $pollStatus",
