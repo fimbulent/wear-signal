@@ -71,6 +71,14 @@ fun WearSignalNavHost() {
   // stores a message while a thread is open, or while the app sits resumed in the recents.
   val dataVersion by DataChanges.messagesVersion.collectAsState()
 
+  // A history import interrupted mid-transfer (watch slept, process died) resumes here:
+  // the ingest is idempotent, so re-running is safe. Bumps happen via DataChanges.
+  LaunchedEffect(Unit) {
+    if (AppDeps.account.isLinked && dev.sam.wearsignal.link.HistorySync.isPending) {
+      withContext(Dispatchers.IO) { dev.sam.wearsignal.link.HistorySync.runPending() }
+    }
+  }
+
   // Group calls confirmed live by an SFU peek: peer → joined member count.
   var activeGroupCalls by remember { mutableStateOf(mapOf<String, Int>()) }
   LaunchedEffect(pollCount) {

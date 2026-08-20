@@ -5,8 +5,6 @@
 > sync, audio calls and call history via RingRTC, a recents tile and unread-count
 > complication, PNI/ACI conversation merging, and live-updating screens.
 
-A vibe-coded Signal app I made for WearOS, so I can send a message to somebody without a phone. Tested on a Pixel Watch 4.
-
 A compact Signal client for Wear OS. It links to your existing Signal account as a
 **linked device** (like Signal Desktop) so an LTE watch can read and reply to
 conversations — and optionally show notifications — while your phone stays at home.
@@ -18,8 +16,11 @@ AGPL-3.0-only, personal use.
 ## What it does
 
 - **Pairing**: shows a provisioning QR; scan it from phone Signal →
-  Settings → Linked devices → Link new device. **Choose "Don't transfer messages"**
-  if asked — the watch can't consume the history backup.
+  Settings → Linked devices → Link new device. Choosing **"Transfer messages"** imports
+  your history: contact names and profile keys, group keys/titles/members, and the most
+  recent 100 messages per conversation (with reactions, receipts, and image attachments
+  fetched afterwards) — so the app starts populated instead of empty. "Don't transfer"
+  still works and starts with history from link time.
 - **Conversations**: opens straight into the conversation list (10 at a time, "Load
   more" for older) → chat-style thread view with left/right bubbles, last 100 messages
   per conversation, populated from every drain (history starts at link time). Contact
@@ -89,8 +90,10 @@ from a computer with [platform-tools](https://developer.android.com/tools/releas
      signed with a different key: `adb uninstall dev.sam.wearsignal` first. That wipes
      the app's data, so you'll re-link afterwards.
 6. **Link**: open the app on the watch and scan the QR from phone Signal →
-   Settings → Linked devices → Link new device (choose "Don't transfer messages"
-   if asked). Then poll once to pull in names, photos, and group state.
+   Settings → Linked devices → Link new device. Choose "Transfer messages" to start
+   with your conversation history, names, and groups already in place (the transfer
+   takes a minute or two while the phone builds the archive; skippable). Then poll
+   once to pull in photos and anything newer.
 
 Afterwards you can turn Wireless debugging off — it costs battery when left on.
 

@@ -69,6 +69,29 @@ class AccountStore(context: Context) {
     get() = prefs.getBoolean("deregistered", false)
     set(value) = prefs.edit { putBoolean("deregistered", value) }
 
+  /**
+   * Link+sync history import state (see HistorySync): the ephemeral backup key from the
+   * provisioning message persists until the import succeeds or is abandoned, so an import
+   * interrupted by sleep or process death resumes on the next app open.
+   */
+  var pendingHistorySyncKey: ByteArray?
+    get() = prefs.getString("pending_history_sync_key", null)?.let { Base64.decode(it) }
+    set(value) = prefs.edit { putString("pending_history_sync_key", value?.let { Base64.encodeWithPadding(it) }) }
+
+  /** Archive location ("cdn:key") once announced, so a resume can skip the long poll. */
+  var pendingHistorySyncArchive: String?
+    get() = prefs.getString("pending_history_sync_archive", null)
+    set(value) = prefs.edit { putString("pending_history_sync_archive", value) }
+
+  /** Link time: imported messages must predate it (later ones arrive via the queue). */
+  var pendingHistorySyncCutoff: Long
+    get() = prefs.getLong("pending_history_sync_cutoff", 0L)
+    set(value) = prefs.edit { putLong("pending_history_sync_cutoff", value) }
+
+  var pendingHistorySyncAttempts: Int
+    get() = prefs.getInt("pending_history_sync_attempts", 0)
+    set(value) = prefs.edit { putInt("pending_history_sync_attempts", value) }
+
   var lastPollAt: Long
     get() = prefs.getLong("last_poll_at", 0L)
     set(value) = prefs.edit { putLong("last_poll_at", value) }

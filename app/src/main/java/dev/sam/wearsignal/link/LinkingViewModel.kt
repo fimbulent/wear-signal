@@ -32,6 +32,9 @@ class LinkingViewModel : ViewModel() {
     data object LoadingQr : LinkState
     data class ShowingQr(val url: String) : LinkState
     data object Registering : LinkState
+
+    /** Linked; importing transferred message history (skippable — linking already succeeded). */
+    data class Syncing(val status: String) : LinkState
     data object Done : LinkState
     data class Error(val message: String) : LinkState
   }
@@ -102,7 +105,10 @@ class LinkingViewModel : ViewModel() {
           val linkResult = LinkingRepository.completeLinking(result.message)
 
           store.value = when (linkResult) {
-            is LinkingRepository.LinkResult.Success -> LinkState.Done
+            is LinkingRepository.LinkResult.Success -> {
+              if (linkResult.ephemeralBackupKey != null) syncHistory()
+              LinkState.Done
+            }
             is LinkingRepository.LinkResult.Failure -> LinkState.Error(linkResult.message)
           }
         }
@@ -113,6 +119,35 @@ class LinkingViewModel : ViewModel() {
         store.value = LinkState.Error("Could not decrypt provisioning message")
       }
     }
+  }
+
+  /**
+   * The user chose "Transfer messages" on the phone: import the history archive (persisted
+   * as pending by completeLinking) before showing the conversation list, so it opens
+   * populated. Failures just mean starting with an empty history — the link itself is
+   * already complete, and an interrupted import resumes on the next app open.
+   */
+  private fun syncHistory() {
+    store.value = LinkState.Syncing("Waiting for your phone…")
+    val result = HistorySync.runPending(
+      isCancelled = { syncSkipped },
+      onStatus = { status ->
+        store.update { current -> if (current is LinkState.Syncing) LinkState.Syncing(status) else current }
+      }
+    )
+    when (result) {
+      is HistorySync.Result.Synced -> Log.i(TAG, "History imported: ${result.counts}")
+      is HistorySync.Result.Unavailable -> Log.i(TAG, "History not imported: ${result.reason}")
+      is HistorySync.Result.Failed -> Log.w(TAG, "History import failed: ${result.message}")
+    }
+  }
+
+  @Volatile
+  private var syncSkipped = false
+
+  /** Skips the history import; the link is already complete. */
+  fun skipSync() {
+    syncSkipped = true
   }
 
   private fun shutdown() {

@@ -32,6 +32,14 @@ import dev.sam.wearsignal.link.LinkingViewModel
 fun PairingScreen(viewModel: LinkingViewModel, onLinked: () -> Unit) {
   val state by viewModel.state.collectAsState()
 
+  // Registration and history import die if the watch dozes mid-way (network drops, the
+  // process becomes killable) — hold the screen on until pairing fully completes.
+  val view = androidx.compose.ui.platform.LocalView.current
+  androidx.compose.runtime.DisposableEffect(state) {
+    view.keepScreenOn = state !is LinkingViewModel.LinkState.Done && state !is LinkingViewModel.LinkState.Error
+    onDispose { view.keepScreenOn = false }
+  }
+
   Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
     when (val s = state) {
       is LinkingViewModel.LinkState.LoadingQr -> {
@@ -60,6 +68,25 @@ fun PairingScreen(viewModel: LinkingViewModel, onLinked: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
           CircularProgressIndicator()
           Text("Linking…", modifier = Modifier.padding(top = 8.dp))
+        }
+      }
+
+      is LinkingViewModel.LinkState.Syncing -> {
+        // Message history is transferring from the phone. Linking is already done, so
+        // skipping is safe — it just means starting with an empty history.
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier.padding(16.dp)
+        ) {
+          CircularProgressIndicator()
+          Text(
+            text = s.status,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp)
+          )
+          Button(onClick = { viewModel.skipSync() }, modifier = Modifier.padding(top = 12.dp)) {
+            Text("Skip")
+          }
         }
       }
 

@@ -30,7 +30,12 @@ object LinkingRepository {
   const val DEVICE_NAME = "Watch"
 
   sealed interface LinkResult {
-    data object Success : LinkResult
+    /**
+     * Linked. When the user chose "Transfer messages" on the phone, [ephemeralBackupKey]
+     * holds the key the primary will encrypt the history archive with (see [HistorySync]);
+     * null means no transfer is coming.
+     */
+    data class Success(val ephemeralBackupKey: ByteArray?) : LinkResult
     data class Failure(val message: String) : LinkResult
   }
 
@@ -126,14 +131,23 @@ object LinkingRepository {
         AppDeps.pniProtocolStore.storeSignedPreKey(pniPreKeys.signedPreKey.id, pniPreKeys.signedPreKey)
         AppDeps.pniProtocolStore.storeLastResortKyberPreKey(pniPreKeys.lastResortKyberPreKey.id, pniPreKeys.lastResortKyberPreKey)
 
+        val ephemeralBackupKey = message.ephemeralBackupKey?.toByteArray()?.takeIf { it.size == 32 }
+        if (ephemeralBackupKey != null) {
+          // Persisted (not just passed along) so an interrupted import resumes on next open.
+          account.pendingHistorySyncKey = ephemeralBackupKey
+          account.pendingHistorySyncArchive = null
+          account.pendingHistorySyncCutoff = System.currentTimeMillis()
+          account.pendingHistorySyncAttempts = 0
+        }
+
         return try {
           uploadOneTimePreKeys(ServiceIdType.ACI, aciIdentityKeyPair)
           uploadOneTimePreKeys(ServiceIdType.PNI, pniIdentityKeyPair)
-          LinkResult.Success
+          LinkResult.Success(ephemeralBackupKey)
         } catch (e: Exception) {
           // Linked but prekey upload failed; last-resort keys keep us decryptable, retry later.
           Log.w(TAG, "One-time prekey upload failed; continuing", e)
-          LinkResult.Success
+          LinkResult.Success(ephemeralBackupKey)
         } finally {
           AppDeps.net.authWebSocket.disconnect()
         }

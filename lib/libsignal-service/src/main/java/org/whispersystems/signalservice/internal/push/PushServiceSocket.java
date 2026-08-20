@@ -486,6 +486,21 @@ public class PushServiceSocket {
     return JsonUtil.fromJson(responseText, RegisterAsSecondaryDeviceResponse.class);
   }
 
+  /**
+   * Long-polls for the link+sync transfer archive the primary uploads after this device links.
+   * Returns the raw JSON body ({@code {"cdn":n,"key":"..."}} or {@code {"error":"..."}}), or
+   * null when the server answered 204 (nothing yet; poll again). The timeout must stay under
+   * the socket read timeout (30s).
+   */
+  public String waitForTransferArchive(int timeoutSeconds) throws IOException {
+    try (Response response = makeServiceRequest(String.format(Locale.US, "/v1/devices/transfer_archive?timeout=%d", timeoutSeconds), "GET", jsonRequestBody(null), NO_HEADERS, NO_HANDLER, SealedSenderAccess.NONE, false)) {
+      if (response.code() == 204 || response.body() == null) {
+        return null;
+      }
+      return readBodyString(response);
+    }
+  }
+
   public SendMessageResponse sendMessage(OutgoingPushMessageList bundle, @Nullable SealedSenderAccess sealedSenderAccess, boolean story)
       throws IOException
   {
